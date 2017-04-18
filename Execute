@@ -1,0 +1,379 @@
+#!/usr/bin/python3
+
+'''Usage:
+    Execute [options] <execdirectory>
+
+Options:
+    -h, --help
+        Show this screen and exit
+    --version
+        Show version number and exit
+    --dpd
+        Run DL_MESO on the data. Note
+        by default will run both DL_MESO
+        and post-analysis
+    --post
+        Run post-analysis on data
+    --group <numbers>
+        Run post-analysis on just groups specified,
+        takes a comma-separated list as argument
+    --skip <number>
+        Use value to specify the width of the sampling
+        gap [default: 1]
+    --autocorrelate <radiusfile>
+        Create an autocorrelation graph on data
+        that has already been processed
+'''
+VERSION='Beta Version\nAuthor: Alberto Nava'
+
+################################################################
+# Importations
+################################################################
+
+from docopt import docopt
+from timeit import default_timer as timer
+from time import strftime, gmtime
+import os
+from glob import glob
+import subprocess
+import pandas as pd
+import numpy as np
+import itertools
+from copy import deepcopy
+import json
+import matplotlib.pyplot as plt
+plt.style.use('ggplot')
+
+################################################################
+# Utilities
+################################################################
+
+def tryMkdir(directory,stop=True):
+    """	Arguments:
+            directory : 
+        Returns:
+            None
+    """
+    if os.path.isdir(directory):
+        if stop:
+            raise SystemExit('Path already exists:\n\t{}'.format(directory))
+    else:
+        try:
+            os.mkdir(directory)
+        except:
+            if stop:
+                raise SystemExit('Could not make directory:\n\t{}'.format(directory))
+
+def testDir(directory):
+    """	Arguments:
+            directory : 
+        Returns:
+            None
+    """
+    if not os.path.isdir(directory):
+        raise SystemExit("Directory does not exist:\n\t{}".format(directory))
+
+def testFile(fileToTest):
+    """	Arguments:
+            fileToTest :
+        Returns:
+            None
+    """
+    if not os.path.exists(fileToTest):
+        raise SystemExit("File does not exist:\n\t{}".format(fileToTest))
+
+def testSkip(number):
+    """	Arguments:
+            number : str; string of an integer
+        Returns:
+            None
+    """
+    if number.isdigit():
+        if int(number) > 0:
+            return(int(number))
+    raise SystemExit('--skip argument not valid')
+
+def getAverageRog(radiusDataFile, skip=1):
+    """	Arguments:
+            radiusDataFile : 
+        Returns:
+            None
+    """
+    testFile(radiusDataFile)
+    with open(radiusDataFile,'r') as F:
+        Data = F.readlines()
+    lastPoints = [float(line.strip().split(' ')[-1]) for line in Data[::skip]]
+    return sum(lastPoints)/len(lastPoints)
+
+def getPlotGroups(projectDir):
+    """	Arguments:
+            projectDir : 
+        Returns:
+            None
+    """
+    metadataFile = os.path.join(projectDir, 'Metadata.tab')
+    testFile(metadataFile)
+    Metadata = pd.read_csv(metadataFile, sep='\t', header=0)
+    columnsToSortBy = [column for column in Metadata.columns 
+                               if column not in ('Run','base_temperature')]
+    uniqueParams = [Metadata[col].unique() for col in columnsToSortBy]
+    # TODO Look to see if product breaks if uniqueParams has more than two params or if only
+    # one param
+    groups = [list(comb) for comb in itertools.product(*uniqueParams)]
+    PlotGroups = []
+    PlotGroupNumber = 0
+    for combination in groups:
+        graphGroup = deepcopy(Metadata)
+        for colName, group in zip(columnsToSortBy, combination):
+            graphGroup = graphGroup[graphGroup[colName] == group]
+        PlotGroups.append(['Group{:03d}'.format(PlotGroupNumber), 
+                            [run for run in graphGroup['Run']]])
+        PlotGroupNumber += 1
+    return PlotGroups
+
+def createGroupsMetadata(projectDir, plotGroups):
+    """	Arguments:
+            projectDir : 
+        Returns:
+            None
+    """
+    metadataFile = os.path.join(projectDir, 'Metadata.tab')
+    testFile(metadataFile)
+    Metadata = pd.read_csv(metadataFile, sep='\t', header=0)
+    variableParameters = [column for column in Metadata.columns 
+                               if column not in ('Run','base_temperature')]
+    #JSON
+    jsonMetadata = {}
+    for groupName, group in plotGroups:
+        jsonMetadata[groupName] = {}
+        jsonMetadata[groupName]['Runs'] = group
+        for parameter in variableParameters:
+            jsonMetadata[groupName][parameter] = Metadata[Metadata['Run'] == group[0]][parameter].values[0]
+    #Table
+    tableMetadata = ['\t'.join(['GroupName','Members'] + variableParameters)]
+    for groupName, group in plotGroups:
+        parameters = [str(Metadata[Metadata['Run'] == group[0]][parameter].values[0])
+                        for parameter in variableParameters]
+        row = '\t'.join([groupName, str([sim.split('n')[1] for sim in group])] + parameters)
+        tableMetadata.append(row)
+    #Write
+    groupJson = os.path.join(projectDir, 'Groups.json')
+    groupTab = os.path.join(projectDir, 'Groups.tab')
+    with open(groupJson, 'w') as J:
+        json.dump(jsonMetadata, J, sort_keys=True, indent=4)
+    with open(groupTab, 'w') as T:
+        T.write('\n'.join(tableMetadata))
+
+def createGraph(fileToRead, fileToWrite):
+    """	Arguments:
+            fileToRead :
+            fileToWrite : 
+        Returns:
+            None
+    """
+    testFile(fileToRead)
+    Data = pd.read_csv(fileToRead, sep='\t', header=None)
+    plt.figure()
+    plt.figure()
+    plt.plot(Data[0], Data[1], 'o-')
+    plt.xlabel(r'$k_{B}T$')
+    plt.ylabel('Radius of Gyration')
+    plt.title('Radius of Gyration vs Temperature')
+    plt.savefig(fileToWrite, bbox_inches='tight')
+
+def writeResults(fileToWrite, rowTuple):
+    """	Arguments:
+            fileToWrite :
+            rowData : 
+        Returns:
+            None
+    """
+    with open(fileToWrite, 'a') as F:
+        F.write('\t'.join(str(item) for item in rowTuple) + '\n')
+
+def initializeResultsDirectory(projectDir, plotGroups):
+    """	Arguments:
+            projectDir : 
+        Returns:
+            None
+    """
+    Results = os.path.join(projectDir, 'Results')
+    Plots = os.path.join(Results, 'Plots')
+    Data = os.path.join(Results, 'Data')
+    tryMkdir(Results,stop=False)
+    tryMkdir(Plots,stop=False)
+    tryMkdir(Data,stop=False)
+    for groupName, group in plotGroups:
+        groupFile = os.path.join(Data, groupName)
+        try:
+            os.mknod(groupFile)
+        except FileExistsError:
+            print('{} already exists'.format(groupFile))
+
+def getTemperature(projectDir, runName, skip=1):
+    """	Arguments:
+            runName : 
+        Returns:
+            None
+    """
+    metadataFile = os.path.join(projectDir, 'Metadata.tab')
+    testFile(metadataFile)
+    Metadata = pd.read_csv(metadataFile, sep='\t', header=0)
+    Temperature = Metadata[Metadata['Run'] == runName]['base_temperature']
+    return Temperature.values[0]
+
+def execDPD(projectDir):
+    """	Arguments:
+            projectDir : str; directory that contains prepared simulation folders
+        Returns:
+            None
+    """
+    for run in glob(os.path.join(projectDir, 'Simulation*')):
+        os.chdir(run)
+        dpdCommand = r"{{ time -p Dpd; }} >> {}/DLMESO.log 2>&1".format(run)
+        trajectCommand = r"{{ time -p Traject 1; }} >> {}/DLMESO.log 2>&1".format(run)
+        radiusCommand = r"{{ time -p radius.exe 1; }} >> {}/DLMESO.log 2>&1".format(run)
+        def runDlmeso():
+            subprocess.run(dpdCommand, check=True, shell=True, executable='/bin/bash')
+            subprocess.run(trajectCommand, check=True, shell=True, executable='/bin/bash')
+            subprocess.run(radiusCommand, check=True, shell=True, executable='/bin/bash')
+        try:
+            runDlmeso()
+        except:
+            try:
+                runDlmeso()
+            except:
+                try:
+                    runDlmeso()
+                except:
+                    try:
+                        runDlmeso()
+                    except:
+                        try:
+                            runDlmeso()
+                        except:
+                            print('{} failed'.format(run))
+                            pass
+
+def execAnalysis(projectDir, Groups='All', skip='1'):
+    """	Arguments:
+            projectDir : str; directory that contains prepared simulation folders
+        Returns:
+            None
+    """
+    plotGroups = getPlotGroups(projectDir)
+    createGroupsMetadata(projectDir, plotGroups)
+    initializeResultsDirectory(projectDir, plotGroups)
+    resultsDir = os.path.join(projectDir, 'Results')
+    dataDir = os.path.join(resultsDir, 'Data')
+    for groupName, group in plotGroups:
+        groupResults = os.path.join(dataDir, groupName)
+        if Groups == 'All' or groupName in Groups:
+            for simulation in group:
+                simulationResults = os.path.join(projectDir, simulation)
+                radiusResults = os.path.join(simulationResults, 'radius_polymer')
+                skipInt = testSkip(skip)
+                R = getAverageRog(radiusResults, skipInt)
+                T = getTemperature(projectDir, simulation, skipInt)
+                writeResults(groupResults, (T,R))
+    plotDir = os.path.join(resultsDir, 'Plots')
+    for groupData in glob(os.path.join(dataDir,'Group*')):
+        if Groups == 'All' or os.path.basename(groupData) in Groups:
+            createGraph(groupData, os.path.join(plotDir, 'Plot{}.pdf'.format(os.path.basename(groupData))))
+
+def runCorr(R, tau=1):
+    """	Arguments:
+            R : array; radius of gyration or any other property
+        Returns:
+            None
+    """
+    #tauMax = len(R[::n]) - 1
+    #summation = 0
+    #for timestep, radius in enumerate(R[::n]):
+    #    if timestep == tauMax:
+    #        break
+    #    else:
+    #        summation += radius * R[timestep + 1]
+    counter = 1
+    summation = 0
+    for timestep, radius in enumerate(R):
+        try:
+            summation += R[timestep] * R[timestep+tau]
+            counter += 1
+        except IndexError:
+            break
+    return summation / counter
+
+def createCorrelation(radiusFile):
+    """	Arguments:
+            radiusFile : str; file that contains radius data
+        Returns:
+            None
+    """
+    testFile(radiusFile)
+    Data = pd.read_csv(radiusFile, sep='  ', header=None, engine='python')
+    time, radius = Data.ix[:,0].values, Data.ix[:,3].values
+    #tau = range(1,len(radius)//4)
+    tau = np.linspace(1,50,500)
+    doubleR = np.append(radius,[0j for value in radius])
+    Rhat = np.fft.fft(doubleR)
+    Rhatmod = np.conj(Rhat).dot(Rhat)
+    Corr = []
+    for n in tau:
+        #Corr.append(runCorr(radius, n))
+        summation = 0
+        for v in range(2*len(radius)):
+            summation += Rhatmod * np.exp(2*np.pi*1j*v*n/(2*len(radius)))
+        Corr.append(summation / (2*len(radius)) / (len(radius) - n))
+    plt.figure()
+    #plt.plot(tau,[c.real + c.imag for c in Corr],'-',label='real + imaginary')
+    plt.plot(tau,[c.real for c in Corr],'-',label='real')
+    plt.plot(tau,[c.imag for c in Corr],'-',label='imaginary')
+    plt.title('Time Correlation Function (pg190)')
+    plt.xlabel(r'$\tau\ (timesteps\ in\ between)$')
+    plt.ylabel(r'$C(\tau)$')
+    plt.legend(loc='best',fontsize=16)
+    plt.savefig('TimeCorrelationFunction.pdf',bbox_inches='tight')
+    plt.show()
+
+################################################################
+# Main
+################################################################
+
+def main(Args):
+    """	Arguments:
+            Args = dict; cli arguments given to docopt
+        Returns:
+            None
+    """
+    beginTime = timer()
+    testDir(Args['<execdirectory>'])
+
+    if Args['--autocorrelate']:
+        createCorrelation(Args['--autocorrelate'])
+    elif Args['--dpd'] == Args['--post']:
+        execDPD(Args['<execdirectory>'])
+        if Args['--group']:
+            myGroups = ['Group{:03d}'.format(int(g)) for g in Args['--group'].split(',')]
+            execAnalysis(Args['<execdirectory>'], Groups=myGroups, skip=Args['--skip'])
+        else:
+            execAnalysis(Args['<execdirectory>'], skip=Args['--skip'])
+    elif Args['--dpd']:
+        execDPD(Args['<execdirectory>'])
+    elif Args['--post']:
+        if Args['--group']:
+            myGroups = ['Group{:03d}'.format(int(g)) for g in Args['--group'].split(',')]
+            execAnalysis(Args['<execdirectory>'], Groups=myGroups, skip=Args['--skip'])
+        else:
+            execAnalysis(Args['<execdirectory>'], skip=Args['--skip'])
+    else:
+        print('Nothing was done')
+
+    endTime = timer()
+    print('Execute Total time elapsed: {}'.format(
+        str(strftime('%H:%M:%S', gmtime(endTime - beginTime)))))
+
+################################################################
+if __name__ == '__main__':
+    arguments = docopt(__doc__, version=VERSION)
+    main(arguments)

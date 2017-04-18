@@ -1,0 +1,547 @@
+#!/usr/bin/python3
+
+'''Usage:
+    Configure [options] <configfile>
+
+Options:
+    -h, --help
+        Show this screen and exit
+    --version
+        Show version number and exit
+    -p <projDir>, --project <projDir>
+        Path to root project directory that doesn't exist yet
+        [default: SimulationProject]
+'''
+VERSION='Beta Version\nAuthor: Alberto Nava'
+
+################################################################
+# Importations
+################################################################
+
+from docopt import docopt
+import os
+import json
+import numpy as np
+from timeit import default_timer as timer
+from time import strftime,gmtime
+from glob import glob
+from copy import deepcopy
+
+################################################################
+# Templates
+################################################################
+
+CONTROL = '''{TITLE}
+
+volume {VOLUME}
+temperature {TEMPERATURE}
+cutoff 1.0
+boundary halo 2.0
+
+timestep 0.01
+steps {STEPS}
+equilibration steps {EQSTEPS}
+scale temperature every 10
+trajectory 0 10
+stats every 10
+stack size 10
+print every 10
+job time 10800.0
+close time 100.0
+
+ensemble nvt dpdvv'''
+
+FIELD = '''{TITLE}
+
+SPECIES {NUMSPECIES}
+{SPECIES}
+
+MOLECULES {NUMMOLS}
+{MOLECULES}
+
+INTERACTIONS {NUMINTERACTIONS}
+{INTERACTIONS}
+
+close'''
+
+################################################################
+# Utilities
+################################################################
+
+def myRange(*args):
+    """	Arguments:
+            *args : 
+        Returns:
+            None
+    """
+    return np.linspace(*args)
+    
+def checkIfAnyStr(iterable):
+    """	Arguments:
+            iterable : iterable; checks if it contains any strings
+        Returns:
+            bool
+    """
+    return any(map(lambda value: type(value) == str, iterable))
+    
+def checkIfLen3(variableParameter):
+    """	Arguments:
+            variableParameter : list;
+        Returns:
+            bool : checks to see if variable parameter list
+                   is supposed to be fed to myRange() or just
+                   iterated over i.e. True means iterate over,
+                   False means feed to myRange()
+    """
+    if len(variableParameter) != 3:
+        return True
+    return False
+    
+def getCoords(Configuration, molecule):
+    """	Arguments:
+            Configuration : dict;
+            molecule : str; 
+        Returns:
+            Coordinates : str; molecule coordinates
+    """
+    Curlyness = complex(Configuration['curlyness'])
+    Height = Configuration['height']
+    numBeads = Configuration['molecules'][molecule]['numbeads']
+    def x(t):
+        return (np.exp(t*Curlyness)).real
+    def y(t):
+        return (np.exp(t*Curlyness)).imag
+    def z(t):
+        return t
+    T = [bead for bead in np.linspace(0,Height,numBeads)]
+    Z = [(x(t),y(t),z(t)) for t in T]
+    x,y,z = list(zip(*Z))
+    Coordinates = '\n'.join([' '.join(['A ']+[str(round(b,6)) for b in a])
+                                                              for a in Z])
+    #with open('coords.dat','w') as f:
+    #    f.write(Coordinates)
+    #print(Coordinates)
+    #fig = plt.figure()
+    #ax = fig.add_subplot(111,projection='3d')
+    #ax.plot(x,y,z,'o-')
+    ##plt.axis('off')
+    ##plt.savefig('Diagram2.png')
+    #plt.show()
+    return Coordinates
+
+def getBondParameters(Configuration, molecule):
+    """	Arguments:
+            Configuration :
+            molecule : 
+        Returns:
+            None
+    """
+    bondLocation = Configuration['molecules'][molecule]['bond']
+    bondParameters = []
+    counter = 1
+    while True:
+        try:
+            bondParameters.append(str(bondLocation['P{}'.format(counter)]))
+        except KeyError:
+            break
+        counter += 1
+    return bondParameters
+
+def getInteractionParameters(Configuration, interaction):
+    """	Arguments:
+            Configuration : dict;
+            interaction : str;
+        Returns:
+            None
+    """
+    intLocation = Configuration['interactions'][interaction]
+    intParameters = []
+    counter = 1
+    while True:
+        try:
+            intParameters.append(str(intLocation['P{}'.format(counter)]))
+        except KeyError:
+            break
+        counter += 1
+    return intParameters
+    
+def getBonds(Configuration, molecule):
+    """	Arguments:
+            Configuration : dict;
+            molecule : str; 
+        Returns:
+            None
+    """
+    bondLocation = Configuration['molecules'][molecule]['bond']
+    numBonds = Configuration['molecules'][molecule]['numbeads'] - 1
+    bondPlugin = []
+    for i in range(1, numBonds + 1):
+        bondPlugin.append(' '.join([bondLocation['type'],
+                                    str(i),
+                                    str(i+1)] +
+                                    getBondParameters(Configuration, molecule)))
+    return '\n'.join(bondPlugin)
+
+def makeMolecule(Configuration, moleculeName):
+    """	Arguments:
+            Configuration : 
+        Returns:
+            None
+    """
+    targetMolecule = Configuration['molecules'][moleculeName]
+    moleculePlugin = [moleculeName, 
+                      'nummols {}'.format(targetMolecule['amount']),
+                      'beads {}'.format(targetMolecule['numbeads']),
+                      getCoords(Configuration, moleculeName),
+                      'bonds {}'.format(targetMolecule['numbeads']-1),
+                      getBonds(Configuration, moleculeName),
+                      'finish']
+    return '\n'.join(moleculePlugin)
+
+def getMolecules(Configuration):
+    """	Arguments:
+            Configuration : 
+        Returns:
+            None
+    """
+    allMolecules = []
+    for molecule in Configuration['molecules']:
+        allMolecules.append(makeMolecule(Configuration, molecule))
+    return '\n'.join(allMolecules)
+
+def getSpecies(Configuration):
+    """	Arguments:
+            Configuration : dict; Updated config that has lists
+                                    substituted for actual values
+        Returns:
+            None
+    """
+    speciesPlugin = []
+    configSpecies = Configuration['species']
+    for specie in configSpecies:
+        speciesPlugin.append(' '.join([specie,
+                                       str(configSpecies[specie]['mass']),
+                                       str(configSpecies[specie]['charge']),
+                                       str(configSpecies[specie]['population'])]))
+    return '\n'.join(speciesPlugin)
+
+def getInteractions(Configuration):
+    """	Arguments:
+            Configuration : 
+        Returns:
+            None
+    """
+    intLocation = Configuration['interactions']
+    intPlugin = []
+    for interaction in intLocation:
+        intPlugin.append(' '.join([intLocation[interaction]['first'],
+                                  intLocation[interaction]['second'],
+                                  intLocation[interaction]['type']] + 
+                                  getInteractionParameters(Configuration, interaction)))
+    return '\n'.join(intPlugin)
+
+def testFileExists(filePath):
+    if not os.path.exists(filePath):
+        raise SystemExit('File does not exist: {}'.format(filePath))
+
+def prepareControlTemplate(Configuration):
+    """	Arguments:
+            Configuration : dict; params from JSON
+        Returns:
+            None
+    """
+    controlContext = {
+            "TITLE": Configuration['title'],
+            "VOLUME": Configuration['volume'],
+            "TEMPERATURE": Configuration['temperature'],
+            "STEPS": Configuration['steps'],
+            "EQSTEPS": Configuration['eqsteps']
+            }
+    return CONTROL.format(**controlContext)
+
+def prepareFieldTemplate(Configuration):
+    """	Arguments:
+            Configuration : dict; params from JSON
+        Returns:
+            None
+    """
+    fieldContext = {
+            "TITLE": Configuration['title'],
+            "NUMSPECIES": len(Configuration['species']),
+            "SPECIES": getSpecies(Configuration),
+            "NUMMOLS": len(Configuration['molecules']),
+            "MOLECULES": getMolecules(Configuration),
+            "NUMINTERACTIONS": len(Configuration['interactions']),
+            "INTERACTIONS": getInteractions(Configuration)
+            }
+    return FIELD.format(**fieldContext)
+
+def readConfig(configFile):
+    """	Arguments:
+            configFile : str; path to INPUT file
+        Returns:
+            None
+    """
+    # Test File existance
+    rawConfig = os.path.abspath(configFile)
+    testFileExists(rawConfig)
+    # Read in INPUT
+    with open(rawConfig,'r') as jsonFile:
+        PARAMETERS = json.load(jsonFile)
+    return PARAMETERS
+
+def findListsInConfig(Configuration):
+    """	Arguments:
+            Configuration : dict; raw configuration
+        Returns:
+            variableParameters : list; contains addresses of variables to be
+                                 varied between trials
+    """
+    variableParameters = []
+    # Checking base parameters
+    for baseParam in Configuration:
+        if type(Configuration[baseParam]) == list:
+            variableParameters.append('base_{}'.format(baseParam))
+    # Checking species parameters
+    for specie in Configuration['species']:
+        for specParam in Configuration['species'][specie]:
+            if type(Configuration['species'][specie][specParam]) == list:
+                variableParameters.append('spec_{}_{}'.format(specie,specParam))
+    # Checking molecule parameters
+    for molecule in Configuration['molecules']:
+        for moleParam in Configuration['molecules'][molecule]:
+            if type(Configuration['molecules'][molecule][moleParam]) == list:
+                variableParameters.append('mol_{}_{}'.format(molecule, moleParam))
+        for bondParam in Configuration['molecules'][molecule]['bond']:
+            if type(Configuration['molecules'][molecule]['bond'][bondParam]) == list:
+                variableParameters.append('mol_{}_bond_{}'.format(molecule, bondParam))
+    # Checkin interaction parameters
+    for interaction in Configuration['interactions']:
+        for intParam in Configuration['interactions'][interaction]:
+            if type(Configuration['interactions'][interaction][intParam]) == list:
+                variableParameters.append('int_{}_{}'.format(interaction, intParam))
+    return variableParameters
+
+def updateConfigsToRun(Configuration, oldConfigsToRun, parameterAddress):
+    """	Arguments:
+            Configuration : dict; raw configuration
+            oldConfigsToRun : list; containing old configs
+            parameterAddress : list; address of parameter from findListsInConfig()
+                                    split up by '_'
+        Returns:
+            None
+    """
+    # Finding target parameter through address
+    if parameterAddress[0] == 'base':
+        targetParameter = Configuration[parameterAddress[1]]
+    elif parameterAddress[0] == 'spec':
+        targetParameter = Configuration['species'][
+                                        parameterAddress[1]][
+                                        parameterAddress[2]]
+    elif parameterAddress[0] == 'mol':
+        if parameterAddress[2] == 'bond':
+            targetParameter = Configuration['molecules'][
+                                            parameterAddress[1]][
+                                            'bond'][
+                                            parameterAddress[3]]
+        else:
+            targetParameter = Configuration['molecules'][
+                                            parameterAddress[1]][
+                                            parameterAddress[2]]
+    elif parameterAddress[0] == 'int':
+        targetParameter = Configuration['interactions'][
+                                        parameterAddress[1]][
+                                        parameterAddress[2]]
+    if (checkIfAnyStr(targetParameter) or 
+        checkIfLen3(targetParameter)):
+        newConfigsToRun = []
+        for config in oldConfigsToRun:
+            for value in targetParameter:
+                newConfig = deepcopy(config)
+                if parameterAddress[0] == 'base':
+                    newConfig[parameterAddress[1]] = value
+                elif parameterAddress[0] == 'spec':
+                    newConfig['species'][
+                              parameterAddress[1]][
+                              parameterAddress[2]] = value
+                elif parameterAddress[0] == 'mol':
+                    if parameterAddress[2] == 'bond':
+                        newConfig['molecules'][
+                                  parameterAddress[1]][
+                                  'bond'][
+                                  parameterAddress[3]] = value
+                    else:
+                        newConfig['molecules'][
+                                  parameterAddress[1]][
+                                  parameterAddress[2]] = value
+                elif parameterAddress[0] == 'int':
+                    newConfig['interactions'][
+                              parameterAddress[1]][
+                              parameterAddress[2]] = value
+                newConfigsToRun.append(newConfig)
+    else:
+        newConfigsToRun = []
+        for config in oldConfigsToRun:
+            # Only difference is we use myRange() instead i.e. np.linspace
+            for value in myRange(*targetParameter):
+                newConfig = deepcopy(config)
+                if parameterAddress[0] == 'base':
+                    newConfig[parameterAddress[1]] = value
+                elif parameterAddress[0] == 'spec':
+                    newConfig['species'][
+                                parameterAddress[1]][
+                                parameterAddress[2]] = value
+                elif parameterAddress[0] == 'mol':
+                    if parameterAddress[2] == 'bond':
+                        newConfig['molecules'][
+                                    parameterAddress[1]][
+                                    'bond'][
+                                    parameterAddress[3]] = value
+                    else:
+                        newConfig['molecules'][
+                                    parameterAddress[1]][
+                                    parameterAddress[2]] = value
+                elif parameterAddress[0] == 'int':
+                    newConfig['interactions'][
+                                parameterAddress[1]][
+                                parameterAddress[2]] = value
+                newConfigsToRun.append(newConfig)
+    return newConfigsToRun
+
+def distributeConfig(Configuration):
+    """ Arguments:
+            Configuration : dict; raw configuration
+        Returns:
+            configsToRun : list; list of formatted dictionaries where
+                            lists have been replaced by corresponding
+                            values either through myRange() or just
+                            iteration
+    """
+    # Get variable parameters
+    variableParameters = findListsInConfig(Configuration)
+    # Copy original configuration to a new list of configurations so that
+    # there is something to update
+    rootConfig = deepcopy(Configuration)
+    configsToRun = [rootConfig]
+    for parameter in variableParameters:
+        parameterAddress = parameter.split('_')
+        configsToRun = updateConfigsToRun(rootConfig, configsToRun, parameterAddress)
+    return configsToRun
+
+def tryMkdir(directory):
+    """	Arguments:
+            directory : 
+        Returns:
+            None
+    """
+    if os.path.isdir(directory):
+        raise SystemExit('Path already exists:\n\t{}'.format(directory))
+    else:
+        try:
+            os.mkdir(directory)
+        except:
+            raise SystemExit('Could not make directory:\n\t{}'.format(directory))
+
+def writeTemplates(projectDir, Field, Control, Input):
+    """	Arguments:
+            None
+        Returns:
+            None
+    """
+    counter = 1
+    while True: 
+        simulationDir = os.path.join(projectDir, 'Simulation{:03d}'.format(counter))
+        if not os.path.exists(simulationDir):
+            tryMkdir(simulationDir)
+            break
+        else:
+            counter += 1 
+    fieldFile = os.path.join(simulationDir, 'FIELD')
+    controlFile = os.path.join(simulationDir, 'CONTROL')
+    inputFile = os.path.join(simulationDir, 'INPUT')
+    with open(fieldFile, 'w') as F:
+        F.write(Field)
+    with open(controlFile, 'w') as C:
+        C.write(Control)
+    with open(inputFile, 'w') as I:
+        json.dump(Input, I, sort_keys=True, indent=4)
+
+def createMetadata(projectDir, rawConfiguration):
+    """	Arguments:
+            projectDir : str;
+            rawConfiguration : dict;
+        Returns:
+            None
+    """
+    variableParameters = findListsInConfig(rawConfiguration)
+    simulationRuns = sorted(glob(os.path.join(projectDir, 'Simulation*')))
+    jsonMetadata = {}
+    tabMetadata = ['\t'.join(['Run'] + variableParameters)]
+    for run in simulationRuns:
+        targetInput = os.path.join(run, 'INPUT')
+        with open(targetInput, 'r') as I:
+            targetMetadata = json.load(I)
+        runName = os.path.basename(run)
+        row = [runName]
+        jsonMetadata[runName] = {}
+        for parameter in variableParameters:
+            parameterAddress = parameter.split('_')
+            if parameterAddress[0] == 'base':
+                targetParameter = targetMetadata[parameterAddress[1]]
+            elif parameterAddress[0] == 'spec':
+                targetParameter = targetMetadata['species'][
+                                                parameterAddress[1]][
+                                                parameterAddress[2]]
+            elif parameterAddress[0] == 'mol':
+                if parameterAddress[2] == 'bond':
+                    targetParameter = targetMetadata['molecules'][
+                                                    parameterAddress[1]][
+                                                    'bond'][
+                                                    parameterAddress[3]]
+                else:
+                    targetParameter = targetMetadata['molecules'][
+                                                    parameterAddress[1]][
+                                                    parameterAddress[2]]
+            elif parameterAddress[0] == 'int':
+                targetParameter = targetMetadata['interactions'][
+                                                parameterAddress[1]][
+                                                parameterAddress[2]]
+            row.append(str(targetParameter))
+            jsonMetadata[runName][parameter] = targetParameter
+        tabMetadata.append('\t'.join(row))
+    metadataJFile = os.path.join(projectDir, 'Metadata.json')
+    metadataTFile = os.path.join(projectDir, 'Metadata.tab')
+    with open(metadataTFile, 'w') as Tab:
+        Tab.write('\n'.join(tabMetadata))
+    with open(metadataJFile, 'w') as Json:
+        json.dump(jsonMetadata , Json, sort_keys=True, indent=4)
+    
+################################################################
+# Main
+################################################################
+
+def main(Args):
+    """	Arguments:
+            Args = dict; CLI arguments given to docopt
+        Returns:
+            None
+    """
+    beginTime = timer()
+    tryMkdir(Args['--project'])
+    rawConfig = readConfig(Args['<configfile>'])
+    templateConfigs = distributeConfig(rawConfig)
+    for config in templateConfigs:
+        writeTemplates(Args['--project'],
+                       prepareFieldTemplate(config),
+                       prepareControlTemplate(config),
+                       config)
+    createMetadata(Args['--project'],
+                   rawConfig)
+    endTime = timer()
+    print('Configure Total time elapsed: {}'.format(
+            str(strftime('%H:%M:%S', gmtime(endTime - beginTime)))))
+
+################################################################
+if __name__ == '__main__':
+    arguments = docopt(__doc__, version=VERSION)
+    main(arguments)

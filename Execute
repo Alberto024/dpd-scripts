@@ -103,7 +103,10 @@ def getAverageRog(radiusDataFile, skip=1):
     with open(radiusDataFile,'r') as F:
         Data = F.readlines()
     lastPoints = [float(line.strip().split(' ')[-1]) for line in Data[::skip]]
-    return sum(lastPoints)/len(lastPoints)
+    if len(lastPoints) == 0:
+        return 'nan'
+    else:
+        return sum(lastPoints)/len(lastPoints)
 
 def getPlotGroups(projectDir):
     """	Arguments:
@@ -148,11 +151,11 @@ def createGroupsMetadata(projectDir, plotGroups):
         jsonMetadata[groupName] = {}
         jsonMetadata[groupName]['Runs'] = group
         for parameter in variableParameters:
-            jsonMetadata[groupName][parameter] = Metadata[Metadata['Run'] == group[0]][parameter].values[0]
+            jsonMetadata[groupName][parameter] = Metadata[Metadata['Run'] == group[0]][parameter].values[0].item()
     #Table
     tableMetadata = ['\t'.join(['GroupName','Members'] + variableParameters)]
     for groupName, group in plotGroups:
-        parameters = [str(Metadata[Metadata['Run'] == group[0]][parameter].values[0])
+        parameters = [str(Metadata[Metadata['Run'] == group[0]][parameter].values[0].item())
                         for parameter in variableParameters]
         row = '\t'.join([groupName, str([sim.split('n')[1] for sim in group])] + parameters)
         tableMetadata.append(row)

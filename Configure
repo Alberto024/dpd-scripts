@@ -26,6 +26,7 @@ from timeit import default_timer as timer
 from time import strftime,gmtime
 from glob import glob
 from copy import deepcopy
+from shutil import copyfile
 
 ################################################################
 # Templates
@@ -75,7 +76,7 @@ def myRange(*args):
             None
     """
     return np.linspace(*args)
-    
+
 def checkIfAnyStr(iterable):
     """	Arguments:
             iterable : iterable; checks if it contains any strings
@@ -83,7 +84,7 @@ def checkIfAnyStr(iterable):
             bool
     """
     return any(map(lambda value: type(value) == str, iterable))
-    
+
 def checkIfLen3(variableParameter):
     """	Arguments:
             variableParameter : list;
@@ -96,7 +97,7 @@ def checkIfLen3(variableParameter):
     if len(variableParameter) != 3:
         return True
     return False
-    
+
 def getCoords(Configuration, molecule):
     """	Arguments:
             Configuration : dict;
@@ -164,7 +165,7 @@ def getInteractionParameters(Configuration, interaction):
             break
         counter += 1
     return intParameters
-    
+
 def getBonds(Configuration, molecule):
     """	Arguments:
             Configuration : dict;
@@ -182,6 +183,83 @@ def getBonds(Configuration, molecule):
                                     getBondParameters(Configuration, molecule)))
     return '\n'.join(bondPlugin)
 
+def getAngleParameters(Configuration, molecule):
+    """	Arguments:
+            Configuration :
+            molecule : 
+        Returns:
+            None
+    """
+    angleLocation = Configuration['molecules'][molecule]['angle']
+    angleParameters = []
+    counter = 1
+    while True:
+        try:
+            angleParameters.append(str(angleLocation['P{}'.format(counter)]))
+        except KeyError:
+            break
+        counter += 1
+    return angleParameters
+
+def getAngles(Configuration, molecule):
+    """	Arguments:
+            Configuration :
+            molecule : 
+        Returns:
+            None
+    """
+    if 'angle' not in Configuration['molecules'][molecule].keys():
+        return ''
+    angleLocation = Configuration['molecules'][molecule]['angle']
+    numAngles = Configuration['molecules'][molecule]['numbeads'] - 2
+    anglePlugin = ['angles {}'.format(numAngles)]
+    for i in range(1, numAngles + 1):
+        anglePlugin.append(' '.join([angleLocation['type'],
+                                     str(i),
+                                     str(i+1),
+                                     str(i+2)] +
+                                     getAngleParameters(Configuration, molecule)))
+    return '\n'.join(anglePlugin)
+
+def getDihedralParameters(Configuration, molecule):
+    """	Arguments:
+            Configuration :
+            molecule : 
+        Returns:
+            None
+    """
+    dihLocation = Configuration['molecules'][molecule]['dihedral']
+    dihParameters = []
+    counter = 1
+    while True:
+        try:
+            dihParameters.append(str(dihLocation['P{}'.format(counter)]))
+        except KeyError:
+            break
+        counter += 1
+    return dihParameters
+
+def getDihedrals(Configuration, molecule):
+    """	Arguments:
+            Configuration :
+            molecule : 
+        Returns:
+            None
+    """
+    if 'dihedral' not in Configuration['molecules'][molecule].keys():
+        return ''
+    dihLocation = Configuration['molecules'][molecule]['dihedral']
+    numDih = Configuration['molecules'][molecule]['numbeads'] - 3
+    dihPlugin = ['dihedrals {}'.format(numDih)]
+    for i in range(1, numDih + 1):
+        dihPlugin.append(' '.join([dihLocation['type'],
+                                     str(i),
+                                     str(i+1),
+                                     str(i+2),
+                                     str(i+3)] +
+                                     getDihedralParameters(Configuration, molecule)))
+    return '\n'.join(dihPlugin)
+
 def makeMolecule(Configuration, moleculeName):
     """	Arguments:
             Configuration : 
@@ -195,6 +273,8 @@ def makeMolecule(Configuration, moleculeName):
                       getCoords(Configuration, moleculeName),
                       'bonds {}'.format(targetMolecule['numbeads']-1),
                       getBonds(Configuration, moleculeName),
+                      getAngles(Configuration, moleculeName),
+                      getDihedrals(Configuration, moleculeName),
                       'finish']
     return '\n'.join(moleculePlugin)
 
@@ -315,6 +395,12 @@ def findListsInConfig(Configuration):
         for bondParam in Configuration['molecules'][molecule]['bond']:
             if type(Configuration['molecules'][molecule]['bond'][bondParam]) == list:
                 variableParameters.append('mol_{}_bond_{}'.format(molecule, bondParam))
+        for angleParam in Configuration['molecules'][molecule]['angle']:
+            if type(Configuration['molecules'][molecule]['angle'][angleParam]) == list:
+                variableParameters.append('mol_{}_angle_{}'.format(molecule, angleParam))
+        for dihParam in Configuration['molecules'][molecule]['dihedral']:
+            if type(Configuration['molecules'][molecule]['dihedral'][dihParam]) == list:
+                variableParameters.append('mol_{}_dih_{}'.format(molecule, dihParam))
     # Checkin interaction parameters
     for interaction in Configuration['interactions']:
         for intParam in Configuration['interactions'][interaction]:
@@ -344,6 +430,16 @@ def updateConfigsToRun(Configuration, oldConfigsToRun, parameterAddress):
                                             parameterAddress[1]][
                                             'bond'][
                                             parameterAddress[3]]
+        elif parameterAddress[2] == 'angle':
+            targetParameter = Configuration['molecules'][
+                                            parameterAddress[1]][
+                                            'angle'][
+                                            parameterAddress[3]]
+        elif parameterAddress[2] == 'dih':
+            targetParameter = Configuration['molecules'][
+                                            parameterAddress[1]][
+                                            'dihedral'][
+                                            parameterAddress[3]]
         else:
             targetParameter = Configuration['molecules'][
                                             parameterAddress[1]][
@@ -369,6 +465,15 @@ def updateConfigsToRun(Configuration, oldConfigsToRun, parameterAddress):
                         newConfig['molecules'][
                                   parameterAddress[1]][
                                   'bond'][
+                                  parameterAddress[3]] = value
+                    elif parameterAddress[2] == 'angle':
+                        newConfig['molecules'][
+                                  parameterAddress[1]][
+                                  'angle'][
+                                  parameterAddress[3]] = value
+                    elif parameterAddress[2] == 'dih':
+                        newConfig['molecules'][
+                                  parameterAddress[1]][ 'dihedral'][
                                   parameterAddress[3]] = value
                     else:
                         newConfig['molecules'][
@@ -397,6 +502,16 @@ def updateConfigsToRun(Configuration, oldConfigsToRun, parameterAddress):
                                     parameterAddress[1]][
                                     'bond'][
                                     parameterAddress[3]] = value
+                    elif parameterAddress[2] == 'angle':
+                        newConfig['molecules'][
+                                  parameterAddress[1]][
+                                  'angle'][
+                                  parameterAddress[3]] = value
+                    elif parameterAddress[2] == 'dih':
+                        newConfig['molecules'][
+                                  parameterAddress[1]][
+                                  'dihedral'][
+                                  parameterAddress[3]] = value
                     else:
                         newConfig['molecules'][
                                     parameterAddress[1]][
@@ -498,6 +613,16 @@ def createMetadata(projectDir, rawConfiguration):
                                                     parameterAddress[1]][
                                                     'bond'][
                                                     parameterAddress[3]]
+                elif parameterAddress[2] == 'angle':
+                    targetParameter = targetMetadata['molecules'][
+                                                    parameterAddress[1]][
+                                                    'angle'][
+                                                    parameterAddress[3]]
+                elif parameterAddress[2] == 'dih':
+                    targetParameter = targetMetadata['molecules'][
+                                                    parameterAddress[1]][
+                                                    'dihedral'][
+                                                    parameterAddress[3]]
                 else:
                     targetParameter = targetMetadata['molecules'][
                                                     parameterAddress[1]][
@@ -515,7 +640,7 @@ def createMetadata(projectDir, rawConfiguration):
         Tab.write('\n'.join(tabMetadata))
     with open(metadataJFile, 'w') as Json:
         json.dump(jsonMetadata , Json, sort_keys=True, indent=4)
-    
+
 ################################################################
 # Main
 ################################################################
@@ -529,6 +654,7 @@ def main(Args):
     beginTime = timer()
     tryMkdir(Args['--project'])
     rawConfig = readConfig(Args['<configfile>'])
+    copyfile(Args['<configfile>'],os.path.join(Args['--project'],'INPUT'))
     templateConfigs = distributeConfig(rawConfig)
     for config in templateConfigs:
         writeTemplates(Args['--project'],

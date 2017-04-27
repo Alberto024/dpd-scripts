@@ -37,7 +37,7 @@ CONTROL = '''{TITLE}
 volume {VOLUME}
 temperature {TEMPERATURE}
 cutoff 1.0
-boundary halo 2.0
+boundary halo 1.0
 
 timestep 0.01
 steps {STEPS}
@@ -50,7 +50,7 @@ print every 10
 job time 10800.0
 close time 100.0
 
-ensemble nvt dpdvv'''
+ensemble nvt mdvv'''
 
 FIELD = '''{TITLE}
 

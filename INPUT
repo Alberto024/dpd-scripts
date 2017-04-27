@@ -1,8 +1,8 @@
 {
     "title": "20 Bead Homopolymer Simulation",
-    "temperature": [0.01, 10.0, 5],
+    "temperature": [0.1, 15.0, 8],
     "steps": 18000,
-    "volume": 16000.0,
+    "volume": 20000.0,
     "curlyness": "1j",
     "eqsteps": 5000,
     "height": 6,
@@ -20,19 +20,19 @@
         "polymer": {
             "amount": 1,
             "bond": {
-                "P1": 0.05,
-                "P2": 10.0,
-                "type": "wlc"
+                "P1": 100.0,
+                "P2": 0.5,
+                "type": "harm"
             },
             "angle": {
                 "type": "harm",
-                "P1": [0.01,0.1,1.0,10.0,100.0],
-                "P2": [50,70,90,110,130]
+                "P1": 150.0,
+                "P2": 180
             },
             "dihedral": {
                 "type": "harm",
-                "P1": [0.01,0.1,1.0,10.0,100.0],
-                "P2": [50,70,90,110,130]
+                "P1": 100.0,
+                "P2": 90
             },
             "name": "polymer",
             "numbeads": 20

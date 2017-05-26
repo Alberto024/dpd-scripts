@@ -11,6 +11,9 @@ Options:
     -p <projDir>, --project <projDir>
         Path to root project directory that doesn't exist yet
         [default: SimulationProject]
+    -c <coordinates>
+        Instead of calculating a spiral, use the coordinates
+        from a comma-separated coordinate file
 '''
 VERSION='Beta Version\nAuthor: Alberto Nava'
 
@@ -36,10 +39,10 @@ CONTROL = '''{TITLE}
 
 volume {VOLUME}
 temperature {TEMPERATURE}
-cutoff 1.0
-boundary halo 1.0
+cutoff 40.0
+boundary halo 5.0
 
-timestep 0.01
+timestep 0.001
 steps {STEPS}
 equilibration steps {EQSTEPS}
 scale temperature every 10
@@ -50,7 +53,7 @@ print every 10
 job time 10800.0
 close time 100.0
 
-ensemble nvt mdvv'''
+ensemble nvt dpdvv'''
 
 FIELD = '''{TITLE}
 
@@ -166,7 +169,7 @@ def getInteractionParameters(Configuration, interaction):
         counter += 1
     return intParameters
 
-def getBonds(Configuration, molecule):
+def getBonds(Configuration, molecule, numberOfBonds=None):
     """	Arguments:
             Configuration : dict;
             molecule : str; 
@@ -174,7 +177,10 @@ def getBonds(Configuration, molecule):
             None
     """
     bondLocation = Configuration['molecules'][molecule]['bond']
-    numBonds = Configuration['molecules'][molecule]['numbeads'] - 1
+    if numberOfBonds:
+        numBonds = numberOfBonds
+    else:
+        numBonds = Configuration['molecules'][molecule]['numbeads'] - 1
     bondPlugin = []
     for i in range(1, numBonds + 1):
         bondPlugin.append(' '.join([bondLocation['type'],
@@ -201,7 +207,7 @@ def getAngleParameters(Configuration, molecule):
         counter += 1
     return angleParameters
 
-def getAngles(Configuration, molecule):
+def getAngles(Configuration, molecule, numberOfAngles=None):
     """	Arguments:
             Configuration :
             molecule : 
@@ -211,7 +217,10 @@ def getAngles(Configuration, molecule):
     if 'angle' not in Configuration['molecules'][molecule].keys():
         return ''
     angleLocation = Configuration['molecules'][molecule]['angle']
-    numAngles = Configuration['molecules'][molecule]['numbeads'] - 2
+    if numberOfAngles:
+        numAngles = numberOfAngles
+    else:
+        numAngles = Configuration['molecules'][molecule]['numbeads'] - 2
     anglePlugin = ['angles {}'.format(numAngles)]
     for i in range(1, numAngles + 1):
         anglePlugin.append(' '.join([angleLocation['type'],
@@ -239,7 +248,7 @@ def getDihedralParameters(Configuration, molecule):
         counter += 1
     return dihParameters
 
-def getDihedrals(Configuration, molecule):
+def getDihedrals(Configuration, molecule, numberOfDihedrals=None):
     """	Arguments:
             Configuration :
             molecule : 
@@ -249,7 +258,10 @@ def getDihedrals(Configuration, molecule):
     if 'dihedral' not in Configuration['molecules'][molecule].keys():
         return ''
     dihLocation = Configuration['molecules'][molecule]['dihedral']
-    numDih = Configuration['molecules'][molecule]['numbeads'] - 3
+    if numberOfDihedrals:
+        numDih = numberOfDihedrals
+    else:
+        numDih = Configuration['molecules'][molecule]['numbeads'] - 3
     dihPlugin = ['dihedrals {}'.format(numDih)]
     for i in range(1, numDih + 1):
         dihPlugin.append(' '.join([dihLocation['type'],
@@ -260,25 +272,45 @@ def getDihedrals(Configuration, molecule):
                                      getDihedralParameters(Configuration, molecule)))
     return '\n'.join(dihPlugin)
 
-def makeMolecule(Configuration, moleculeName):
+def makeMolecule(Configuration, moleculeName, coordinateFile=None):
     """	Arguments:
             Configuration : 
         Returns:
             None
     """
     targetMolecule = Configuration['molecules'][moleculeName]
+    if coordinateFile:
+        with open(coordinateFile, 'r') as F:
+            rawCoords = F.readlines()
+        numBeads = len(rawCoords)
+        numBonds = len(rawCoords)-1
+        numAngles = len(rawCoords)-2
+        numDihedrals = len(rawCoords)-3
+        Coordinates = '\n'.join([' '.join(['A ']+[str(round(float(b),6)) for b in coordinate.strip().split(',')])
+                                                                  for coordinate in rawCoords])
+        beadHeader = 'beads {}'.format(numBeads)
+        bondHeader = 'bonds {}'.format(numBonds)
+        
+    else:
+        numBeads = targetMolecule['numbeads']
+        numBonds = targetMolecule['numbeads']-1
+        numAngles = targetMolecule['numbeads']-2
+        numDihedrals = targetMolecule['numbeads']-3
+        beadHeader = 'beads {}'.format(numBeads)
+        Coordinates = getCoords(Configuration, moleculeName)
+        bondHeader = 'bonds {}'.format(numBonds)
     moleculePlugin = [moleculeName, 
                       'nummols {}'.format(targetMolecule['amount']),
-                      'beads {}'.format(targetMolecule['numbeads']),
-                      getCoords(Configuration, moleculeName),
-                      'bonds {}'.format(targetMolecule['numbeads']-1),
-                      getBonds(Configuration, moleculeName),
-                      getAngles(Configuration, moleculeName),
-                      getDihedrals(Configuration, moleculeName),
+                      beadHeader,
+                      Coordinates,
+                      bondHeader,
+                      getBonds(Configuration, moleculeName, numBonds),
+                      getAngles(Configuration, moleculeName, numAngles),
+                      getDihedrals(Configuration, moleculeName, numDihedrals),
                       'finish']
     return '\n'.join(moleculePlugin)
 
-def getMolecules(Configuration):
+def getMolecules(Configuration, coordinates=None):
     """	Arguments:
             Configuration : 
         Returns:
@@ -286,7 +318,7 @@ def getMolecules(Configuration):
     """
     allMolecules = []
     for molecule in Configuration['molecules']:
-        allMolecules.append(makeMolecule(Configuration, molecule))
+        allMolecules.append(makeMolecule(Configuration, molecule, coordinates))
     return '\n'.join(allMolecules)
 
 def getSpecies(Configuration):
@@ -339,7 +371,7 @@ def prepareControlTemplate(Configuration):
             }
     return CONTROL.format(**controlContext)
 
-def prepareFieldTemplate(Configuration):
+def prepareFieldTemplate(Configuration, Coordinates=None):
     """	Arguments:
             Configuration : dict; params from JSON
         Returns:
@@ -350,7 +382,7 @@ def prepareFieldTemplate(Configuration):
             "NUMSPECIES": len(Configuration['species']),
             "SPECIES": getSpecies(Configuration),
             "NUMMOLS": len(Configuration['molecules']),
-            "MOLECULES": getMolecules(Configuration),
+            "MOLECULES": getMolecules(Configuration, Coordinates),
             "NUMINTERACTIONS": len(Configuration['interactions']),
             "INTERACTIONS": getInteractions(Configuration)
             }
@@ -559,13 +591,16 @@ def tryMkdir(directory):
 
 def writeTemplates(projectDir, Field, Control, Input):
     """	Arguments:
-            None
+            projectDir  :
+            Field       :
+            Control     :
+            Input       :
         Returns:
             None
     """
     counter = 1
     while True: 
-        simulationDir = os.path.join(projectDir, 'Simulation{:03d}'.format(counter))
+        simulationDir = os.path.join(projectDir, 'Simulation{:04d}'.format(counter))
         if not os.path.exists(simulationDir):
             tryMkdir(simulationDir)
             break
@@ -654,11 +689,14 @@ def main(Args):
     beginTime = timer()
     tryMkdir(Args['--project'])
     rawConfig = readConfig(Args['<configfile>'])
-    copyfile(Args['<configfile>'],os.path.join(Args['--project'],'INPUT'))
+    copyfile(Args['<configfile>'], os.path.join(Args['--project'], 'INPUT'))
     templateConfigs = distributeConfig(rawConfig)
+    if Args['-c']:
+        if not os.path.exists(Args['-c']):
+            raise SystemExit('Coordinate File does not exist: {}'.format(Args['-c']))
     for config in templateConfigs:
         writeTemplates(Args['--project'],
-                       prepareFieldTemplate(config),
+                       prepareFieldTemplate(config, Coordinates=Args['-c']),
                        prepareControlTemplate(config),
                        config)
     createMetadata(Args['--project'],

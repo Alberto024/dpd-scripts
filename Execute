@@ -129,7 +129,7 @@ def getPlotGroups(projectDir):
         graphGroup = deepcopy(Metadata)
         for colName, group in zip(columnsToSortBy, combination):
             graphGroup = graphGroup[graphGroup[colName] == group]
-        PlotGroups.append(['Group{:03d}'.format(PlotGroupNumber), 
+        PlotGroups.append(['Group{:04d}'.format(PlotGroupNumber), 
                             [run for run in graphGroup['Run']]])
         PlotGroupNumber += 1
     return PlotGroups
@@ -231,7 +231,7 @@ def execDPD(projectDir):
         Returns:
             None
     """
-    for run in glob(os.path.join(projectDir, 'Simulation*')):
+    for run in sorted(glob(os.path.join(projectDir, 'Simulation*'))):
         os.chdir(run)
         dpdCommand = r"{{ time -p Dpd; }} >> {}/DLMESO.log 2>&1".format(run)
         trajectCommand = r"{{ time -p Traject 1; }} >> {}/DLMESO.log 2>&1".format(run)
@@ -240,6 +240,7 @@ def execDPD(projectDir):
             subprocess.run(dpdCommand, check=True, shell=True, executable='/bin/bash')
             subprocess.run(trajectCommand, check=True, shell=True, executable='/bin/bash')
             subprocess.run(radiusCommand, check=True, shell=True, executable='/bin/bash')
+        print('Executing {}'.format(os.path.basename(run)))
         try:
             runDlmeso()
         except:
@@ -357,7 +358,7 @@ def main(Args):
     elif Args['--dpd'] == Args['--post']:
         execDPD(Args['<execdirectory>'])
         if Args['--group']:
-            myGroups = ['Group{:03d}'.format(int(g)) for g in Args['--group'].split(',')]
+            myGroups = ['Group{:04d}'.format(int(g)) for g in Args['--group'].split(',')]
             execAnalysis(Args['<execdirectory>'], Groups=myGroups, skip=Args['--skip'])
         else:
             execAnalysis(Args['<execdirectory>'], skip=Args['--skip'])
@@ -365,7 +366,7 @@ def main(Args):
         execDPD(Args['<execdirectory>'])
     elif Args['--post']:
         if Args['--group']:
-            myGroups = ['Group{:03d}'.format(int(g)) for g in Args['--group'].split(',')]
+            myGroups = ['Group{:04d}'.format(int(g)) for g in Args['--group'].split(',')]
             execAnalysis(Args['<execdirectory>'], Groups=myGroups, skip=Args['--skip'])
         else:
             execAnalysis(Args['<execdirectory>'], skip=Args['--skip'])

@@ -1,3 +1,4 @@
 pbc set {100 100 100} -all
 pbc box
 pbc wrap -center com -all
+mol modstyle 0 0 CPK

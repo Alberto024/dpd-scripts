@@ -8,6 +8,9 @@ Options:
         Show this screen and exit
     --version
         Show version number and exit
+    -t <threads>, --threads <threads>
+        Amount of threads to use for dl_meso DPD.
+        Default is to create 1 task per CPU available
     --dpd
         Run DL_MESO on the data. Note
         by default will run both DL_MESO
@@ -92,6 +95,29 @@ def testSkip(number):
         if int(number) > 0:
             return(int(number))
     raise SystemExit('--skip argument not valid')
+
+def checkMaxCPU(arguments):
+    """ Arguments:
+            arguments : dictionary; CLI arguments from docopt
+        Returns:
+            int or None; the max number of CPU to use, if None
+                         then there is no limit
+        Checks --threads option from CLI, if option not given
+        then default is to use all available CPU
+    """
+    # Returning a maximum CPU value if given
+    if arguments['--threads']:
+        if arguments['--threads'].isdigit():
+            Max = int(arguments['--threads'])
+            if Max <= os.cpu_count() and Max > 0:
+                return Max
+            else:
+                raise SystemExit('--threads greater than available CPUs')
+        else:
+            raise SystemExit('Invalid value to --threads: {}'.format(
+                        arguments['--threads']))
+    else:
+        return None
 
 def getAverageRog(radiusDataFile, skip=1):
     """	Arguments:
@@ -225,17 +251,21 @@ def getTemperature(projectDir, runName, skip=1):
     Temperature = Metadata[Metadata['Run'] == runName]['base_temperature']
     return Temperature.values[0]
 
-def execDPD(projectDir):
+def execDPD(projectDir, maxcpu):
     """	Arguments:
             projectDir : str; directory that contains prepared simulation folders
         Returns:
             None
     """
+    if maxcpu:
+        numThreads = 'OMP_NUM_THREADS={} '.format(maxcpu)
+    else:
+        numThreads = ''
     for run in sorted(glob(os.path.join(projectDir, 'Simulation*'))):
         os.chdir(run)
-        dpdCommand = r"{{ time -p Dpd; }} >> {}/DLMESO.log 2>&1".format(run)
-        trajectCommand = r"{{ time -p Traject 1; }} >> {}/DLMESO.log 2>&1".format(run)
-        radiusCommand = r"{{ time -p radius.exe 1; }} >> {}/DLMESO.log 2>&1".format(run)
+        dpdCommand = r"{{ time -p {}Dpd; }} >> {}/DLMESO.log 2>&1".format(numThreads,run)
+        trajectCommand = r"{{ time -p {}Traject 1; }} >> {}/DLMESO.log 2>&1".format(numThreads,run)
+        radiusCommand = r"{{ time -p {}radius.exe 1; }} >> {}/DLMESO.log 2>&1".format(numThreads,run)
         def runDlmeso():
             subprocess.run(dpdCommand, check=True, shell=True, executable='/bin/bash')
             subprocess.run(trajectCommand, check=True, shell=True, executable='/bin/bash')
@@ -352,18 +382,19 @@ def main(Args):
     """
     beginTime = timer()
     testDir(Args['<execdirectory>'])
+    checkMaxCPU(Args)
 
     if Args['--autocorrelate']:
         createCorrelation(Args['--autocorrelate'])
     elif Args['--dpd'] == Args['--post']:
-        execDPD(Args['<execdirectory>'])
+        execDPD(Args['<execdirectory>'],Args['--threads'])
         if Args['--group']:
             myGroups = ['Group{:04d}'.format(int(g)) for g in Args['--group'].split(',')]
             execAnalysis(Args['<execdirectory>'], Groups=myGroups, skip=Args['--skip'])
         else:
             execAnalysis(Args['<execdirectory>'], skip=Args['--skip'])
     elif Args['--dpd']:
-        execDPD(Args['<execdirectory>'])
+        execDPD(Args['<execdirectory>'],Args['--threads'])
     elif Args['--post']:
         if Args['--group']:
             myGroups = ['Group{:04d}'.format(int(g)) for g in Args['--group'].split(',')]

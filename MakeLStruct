@@ -1,0 +1,227 @@
+#!/usr/bin/python3
+
+"""Usage:
+    MakeLStruct [options] <coordinates>
+
+Options:
+    -h, --help
+        Show this screen and exit
+    --version
+        Show version number and exit
+    -d <delimiter>, --delimiter <delimiter>
+        Delimiter in coordinate file
+        [default: ,]
+    -t <title>, --title <title>
+        Description line to go on top of data file
+        [default: DPD Polymer Simulation Config Data]
+    -o <outfile>, --outfile <outfile>
+        File to write to [default: Polymer.dat]
+
+Arguments:
+    <coordinates>
+        File that contains coordinates of
+        molecules
+"""
+VERSION='Beta Version\nAuthor: Alberto Nava'
+
+################################################################
+# Importations
+################################################################
+
+from docopt import docopt
+import os
+import pandas as pd
+import numpy as np
+from timeit import default_timer as timer
+from time import strftime, gmtime
+
+################################################################
+# Template
+################################################################
+
+dataTemplate="""#{TITLE}
+
+{NATOMS} atoms
+{NBONDS} bonds
+{NANGLES} angles
+{NDIHEDRALS} dihedrals
+{NATOMTYPES} atom types
+{NBONDTYPES} bond types
+{NANGLETYPES} angle types
+{NDIHEDRALTYPES} dihedral types
+{XLOXHI} xlo xhi
+{YLOYHI} ylo yhi
+{ZLOZHI} zlo zhi
+
+Atoms
+#angle   atom-ID molecule-ID atom-type x y z
+
+{ATOMCOORDS}
+
+Bonds
+#line syntax: ID type atom1 atom2
+
+{BONDS}
+
+Angles
+#line syntax: ID type atom1 atom2 atom3
+
+{ANGLES}
+
+Dihedrals
+#line syntax: ID type atom1 atom2 atom3 atom4
+
+{DIHEDRALS}
+"""
+
+################################################################
+# Utilities
+################################################################
+
+def readCoords(Args):
+    """	Arguments:
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            Data : pd dataframe; dataframe containing coordinate
+                   information
+        Reads coordinate file and returns a pandas dataframe
+    """
+    Data = pd.read_csv(Args['<coordinates>'],
+                       sep=Args['--delimiter'],
+                       header=None)
+    return Data
+
+def getAtoms(Coordinates, Args):
+    """	Arguments:
+            Coordinates : pd dataframe; contains atom
+                          coordinates
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            None
+    """
+    #angle   atom-ID molecule-ID atom-type x y z
+    atomLocations = []
+    index = 1
+    for x,y,z in Coordinates.values:
+        atomLocations.append(' '.join(
+                    str(a) for a in [index,1,1,x,y,z]))
+        index += 1
+    return '\n'.join(atomLocations)
+
+def getBonds(Natoms, Args):
+    """	Arguments:
+            Coordinates : pd dataframe; contains atom
+                          coordinates
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            None
+    """
+    #line syntax: ID type atom1 atom2
+    bondLocations = []
+    index = 1
+    for j in range(1,Natoms):
+        bondLocations.append(' '.join(
+                    str(a) for a in [index,1,j,j+1]))
+        index += 1
+    return '\n'.join(bondLocations)
+
+def getAngles(Natoms, Args):
+    """	Arguments:
+            Coordinates : pd dataframe; contains atom
+                          coordinates
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            None
+    """
+    #line syntax: ID type atom1 atom2 atom3
+    angleLocations = []
+    index = 1
+    for j in range(1,Natoms-1):
+        angleLocations.append(' '.join(
+                    str(a) for a in [index,1,j,j+1,j+2]))
+        index += 1
+    return '\n'.join(angleLocations)
+
+def getDihedrals(Natoms, Args):
+    """	Arguments:
+            Coordinates : pd dataframe; contains atom
+                          coordinates
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            None
+    """
+#line syntax: ID type atom1 atom2 atom3 atom4
+    dihLocations = []
+    index = 1
+    for j in range(1,Natoms-2):
+        dihLocations.append(' '.join(
+                    str(a) for a in [index,1,j,j+1,j+2,j+3]))
+        index += 1
+    return '\n'.join(dihLocations)
+
+def fillOutTemplate(Coordinates, Args):
+    """	Arguments:
+            Coordinates : pd dataframe; contains atom
+                          coordinates
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            goodData : str; filled out template
+        Fills out template and returns it
+    """
+    numAtoms = Coordinates.shape[0]
+    Context = {
+            "TITLE": Args['--title'],
+            "NATOMS": numAtoms,
+            "NBONDS": numAtoms-1,
+            "NANGLES": numAtoms-2,
+            "NDIHEDRALS": numAtoms-3,
+            "NATOMTYPES": 1,
+            "NBONDTYPES": 1,
+            "NANGLETYPES": 1,
+            "NDIHEDRALTYPES": 1,
+            "XLOXHI": "-50 50",
+            "YLOYHI": "-50 50",
+            "ZLOZHI": "-50 50",
+            "ATOMCOORDS": getAtoms(Coordinates, Args),
+            "BONDS": getBonds(numAtoms, Args),
+            "ANGLES": getAngles(numAtoms, Args),
+            "DIHEDRALS": getDihedrals(numAtoms, Args)
+            }
+    goodData = dataTemplate.format(**Context)
+    return goodData
+
+def saveDataFile(Data, Args):
+    """	Arguments:
+            Data : str; contains data file to write
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            None
+        Writes finished data file to a file
+    """
+    with open(Args['--outfile'], 'w') as F:
+        F.write(Data)
+
+################################################################
+# Main
+################################################################
+
+def main(Args):
+    """	Arguments:
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            None
+    """
+    beginTime = timer()
+    ############################################################
+    coordData = readCoords(Args)
+    completeData = fillOutTemplate(coordData, Args)
+    saveDataFile(completeData, Args)
+    ############################################################
+    endTime = timer()
+    print('Total time elapsed: {}'.format(
+        str(strftime('%H:%M:%S', gmtime(endTime - beginTime)))))
+
+################################################################
+if __name__ == '__main__':
+    arguments = docopt(__doc__, version=VERSION)
+    main(arguments)

@@ -53,6 +53,10 @@ dataTemplate="""#{TITLE}
 {YLOYHI} ylo yhi
 {ZLOZHI} zlo zhi
 
+Masses
+
+{MASSES}
+
 Atoms
 #angle   atom-ID molecule-ID atom-type x y z
 
@@ -182,6 +186,7 @@ def fillOutTemplate(Coordinates, Args):
             "XLOXHI": "-50 50",
             "YLOYHI": "-50 50",
             "ZLOZHI": "-50 50",
+            "MASSES": "1 12.001",
             "ATOMCOORDS": getAtoms(Coordinates, Args),
             "BONDS": getBonds(numAtoms, Args),
             "ANGLES": getAngles(numAtoms, Args),

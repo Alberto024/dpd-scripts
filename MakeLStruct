@@ -58,22 +58,18 @@ Masses
 {MASSES}
 
 Atoms
-#angle   atom-ID molecule-ID atom-type x y z
 
 {ATOMCOORDS}
 
 Bonds
-#line syntax: ID type atom1 atom2
 
 {BONDS}
 
 Angles
-#line syntax: ID type atom1 atom2 atom3
 
 {ANGLES}
 
 Dihedrals
-#line syntax: ID type atom1 atom2 atom3 atom4
 
 {DIHEDRALS}
 """

@@ -1,0 +1,83 @@
+#!/usr/bin/python3
+
+"""Usage:
+    CalcCv [options] <data> <temp>
+
+Options:
+    -h, --help
+        Show this screen and exit
+    --version
+        Show version number and exit
+    -d <delimiter>, --delimiter <delimiter>
+        Delimiter in data file
+        [default: ,]
+    -c <column>, --column <column>
+        Column name for Potential Energy in data file
+        [default: PotEng]
+
+Arguments:
+    <data>
+        File that contains coordinates of
+        molecules. Note: expects PotEng in kJ
+    <temp>
+        Temperature simulation was ran at in Kelvin
+"""
+VERSION='Beta Version\nAuthor: Alberto Nava'
+
+################################################################
+# Importations
+################################################################
+
+from docopt import docopt
+import os
+import pandas as pd
+import numpy as np
+
+################################################################
+# Utilities
+################################################################
+
+def readFile(Args):
+    """	Arguments:
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            Data : pd dataframe; dataframe containing data
+                   information
+        Reads data file and returns a pandas dataframe
+    """
+    Data = pd.read_csv(Args['<data>'],
+                       sep=Args['--delimiter'],
+                       header=0)
+    return Data
+
+def calculateVar(Data, Args):
+    """	Arguments:
+            Data : pd dataframe; dataframe containing data info
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            variance
+    """
+    return np.var(eval("Data.{}.values".format(Args['--column'])))
+
+################################################################
+# Main
+################################################################
+
+def main(Args):
+    """	Arguments:
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            None
+    """
+    ############################################################
+    if not os.path.exists(Args['<data>']):
+        raise SystemExit('data file does not exist')
+    thermoData = readFile(Args)
+    varEnergy = calculateVar(thermoData, Args)
+    print('{}'.format(varEnergy/(float(Args['<temp>']))))
+    ############################################################
+
+################################################################
+if __name__ == '__main__':
+    arguments = docopt(__doc__, version=VERSION)
+    main(arguments)

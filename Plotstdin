@@ -1,0 +1,79 @@
+#!/usr/bin/python3
+
+"""Usage:
+    Plotstdin [options]
+
+Options:
+    -h, --help
+        Show this help then exit
+    --version
+        Show version number
+    -d <delim>, --delimiter <delim>
+        Specify the delimiter separating the two columns
+        [default: ,]
+    -n, --names
+        Use this option if there are header names i.e. column
+        names
+    -s <style>, --style <style>
+        Line style plotted by matplotlib [default: o-]
+    -t <title>, --title <title>
+        Title shown on plot
+    -o <outputfile>, --output <outputfile>
+        If you wish to save the plot, specify name of graph
+        with this option"""
+VERSION='Beta Version\nAuthor: Alberto Nava'
+
+################################################################
+# Importations
+################################################################
+
+from docopt import docopt
+import sys
+import matplotlib.pyplot as plt
+from timeit import default_timer as timer
+from time import strftime, gmtime
+plt.style.use('ggplot')
+
+################################################################
+# Main
+################################################################
+
+def main(Arguments):
+    """	Arguments:
+            Arguments : dict; CLI arguments from docopt
+        Returns:
+            None
+    """
+    beginTime = timer()
+    ############################################################
+    Stdin = sys.stdin.readlines()
+    if Arguments['--names']:
+        Xname, Yname = Stdin[0].strip().split(Arguments['--delimiter'])
+        print('Using {} and {} as axis labels'.format(Xname, Yname))
+        Stdin.pop(0)
+    X,Y = [],[]
+    for line in Stdin:
+        x, y = line.strip().split(Arguments['--delimiter'])
+        X.append(float(x))
+        Y.append(float(y))
+    plt.plot(X,Y,Arguments['--style'])
+    if Arguments['--names']:
+        plt.xlabel(Xname,fontsize=14)
+        plt.ylabel(Yname,fontsize=14)
+    if Arguments['--title']:
+        plt.title(Arguments['--title'],fontsize=18)
+    if Arguments['--output']:
+        if os.path.exists(Arguments['--output']):
+            print('Cannot save graph to file that already exists')
+        else:
+            plt.savefig(Arguments['--output'],bbox_inches='tight')
+    plt.show()
+    ############################################################
+    endTime = timer()
+    print('Total time elapsed: {}'.format(
+        str(strftime('%H:%M:%S', gmtime(endTime - beginTime)))))
+
+################################################################
+if __name__ == "__main__":
+    args = docopt(__doc__,version=VERSION)
+    main(args)

@@ -6,4 +6,4 @@ if [ ! -f "${Name}" ]; then
     exit 1
 fi
 baseName=$(echo "${Name}" | awk -F'_' '{print $1}')
-awk '/Step Temp PotEng/,/Loop time of /' "${Name}" | head -n -2 | awk '{printf("%s,%s,%s,%s,%s,%s\n",$1,$2,$3,$4,$5,$6)}' > "${baseName}.data"
+awk '/Step Temp PotEng/,/Loop time of /' "${Name}" | head -n -2 | awk '{printf("%s,%s,%s,%s,%s,%s,%s\n",$1,$2,$3,$4,$5,$6,$7)}' > "${baseName}.data"

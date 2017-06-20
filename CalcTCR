@@ -1,0 +1,176 @@
+#!/usr/bin/python3
+
+"""Usage:
+    CalcTCR [options] <data>
+
+Options:
+    -h, --help
+        Show this screen and exit
+    --version
+        Show version number and exit
+    -d <delim>, --delimiter <delim>
+        Delimiter to use [default: ,]
+
+Arguments:
+    <data>
+        file with coordinates
+"""
+VERSION='Beta Version\nAuthor: Alberto Nava'
+
+################################################################
+# Importations
+################################################################
+
+from docopt import docopt
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+plt.style.use('ggplot')
+from numba import njit,jit
+from timeit import default_timer as timer
+from time import strftime,gmtime
+
+################################################################
+# Utilities
+################################################################
+
+def readFile(Args):
+    """	Arguments:
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            Data : pd dataframe; dataframe containing data
+                   information
+        Reads data file and returns a pandas dataframe
+    """
+    Data = pd.read_csv(Args['<data>'],
+                       sep=Args['--delimiter'],
+                       header=None)
+    return Data
+
+@njit
+def multidet(a,b,c):
+    n=a.shape[0]
+    d=np.empty(n)
+    for i in range(n):
+        u,v,w=a[i],b[i],c[i]
+        d[i]=\
+        u[0]*(v[1]*w[2]-v[2]*w[1])+\
+        u[1]*(v[2]*w[0]-v[0]*w[2])+\
+        u[2]*(v[0]*w[1]-v[1]*w[0])  # 14 operations / det
+    return d
+
+################################################################
+# Main
+################################################################
+
+def main(Args):
+    """	Arguments:
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            None
+    """
+    ############################################################
+    # Need first, second, and third derivatives no matter what
+    ############################################################
+    Data = readFile(Args).sort_values(0)
+    X,Y,Z = Data[2],Data[3],Data[4]
+    r = np.array(list(zip(X,Y,Z)))
+    r1 = np.gradient(r,axis=0)
+    r2 = np.gradient(r1,axis=0)
+    r3 = np.gradient(r2,axis=0)
+
+    ############################################################
+    # Method 1: Gram-Schmidt Procedure to create orthonormal
+    # basis set
+    ############################################################
+    beginTime = timer()
+
+    allTNB = np.array([np.linalg.qr(np.array([r1[ts],r2[ts],r3[ts]]))[0] for ts in range(r.shape[0])])
+    Tangent = allTNB[:,0]
+    Normal = allTNB[:,1]
+    Binormal = allTNB[:,2]
+    Torsion = np.array([np.dot(-p,bprime) for p,bprime in zip(Normal,np.gradient(Binormal,axis=1))])
+    Curvature = np.linalg.norm(r2,axis=1)
+    #print(Torsion)
+    #print(Curvature)
+    conformationRatio = np.array([Torsion[i]/Curvature[i] for i in range(Torsion.shape[0])])
+    #print(conformationRatio)
+    meanConformation = conformationRatio.mean()
+    varConformation = conformationRatio.std()
+    print(meanConformation,varConformation)
+
+    endTime = timer()
+    print('Method 1 Total time elapsed: {}'.format(
+        str(strftime('%H:%M:%S.%f', gmtime(endTime - beginTime)))))
+    ############################################################
+    # Method 2: Shortcut to torsion and curvature through clever
+    # cross products, triple products, and inner products
+    ############################################################
+    #beginTime = timer()
+
+    #torsionNumerator2 = np.einsum('ij, ij->i',r1,np.cross(r2,r3))
+    #Torsion = np.array([torsionNumerator2[ts]/
+    #                    np.linalg.norm(np.cross(r1[ts],r2[ts]))**2 
+    #                    for ts in range(r.shape[0])])
+    #Curvature2 = np.array([np.linalg.norm(np.cross(r1[ts],r2[ts]))/
+    #                       np.linalg.norm(r1[ts])**3 
+    #                       for ts in range(r.shape[0])])
+    ##print(Torsion2)
+    ##print(Curvature2)
+
+    #endTime = timer()
+    #print('Method 2 Total time elapsed: {}'.format(
+    #    str(strftime('%H:%M:%S.%f', gmtime(endTime - beginTime)))))
+
+    ############################################################
+    # Method 3: Shortcut to torsion and curvature taking
+    # advantage of the numba capablities
+    ############################################################
+    #beginTime = timer()
+
+    #torsionNumerator3 = multidet(r1,r2,r3)
+    #Torsion3 = np.array([torsionNumerator3[ts]/
+    #                     np.linalg.norm(np.cross(r1[ts],r2[ts]))**2 
+    #                     for ts in range(r.shape[0])])
+    #Curvature3 = np.array([np.linalg.norm(np.cross(r1[ts],r2[ts]))/
+    #                       np.linalg.norm(r1[ts])**3 
+    #                       for ts in range(r.shape[0])])
+    ##print(Torsion3)
+    ##print(Curvature3)
+
+    #endTime = timer()
+    #print('Method 3 Total time elapsed: {}'.format(
+    #    str(strftime('%H:%M:%S.%f', gmtime(endTime - beginTime)))))
+
+    ############################################################
+    # Check that each set is orthonormal
+    ############################################################
+    ##print(np.linalg.norm(Tangent,axis=1))
+    ##print(np.linalg.norm(Normal,axis=1))
+    ##print(np.linalg.norm(Binormal,axis=1))
+    ##print([np.dot(a,b) for a,b in zip(Tangent,Normal)])
+    ##print([np.dot(a,b) for a,b in zip(Tangent,Binormal)])
+    ##print([np.dot(a,b) for a,b in zip(Normal,Binormal)])
+
+    ############################################################
+    # Plotting
+    ############################################################
+    #fig = plt.figure()
+    #ax = fig.add_subplot(111, projection='3d')
+    #ax.plot(X,Y,Z,'o-')
+    ##ax.plot(*zip(*dydt),'o-')
+    #ax.set(xlabel='X',
+    #       ylabel='Y',
+    #       zlabel='Z')
+    ##plt.show()
+    #beginTime = timer()
+    #endTime = timer()
+    #print('Total time elapsed: {}'.format(
+    #    str(strftime('%H:%M:%S', gmtime(endTime - beginTime)))))
+
+################################################################
+if __name__ == '__main__':
+    arguments = docopt(__doc__, version=VERSION)
+    main(arguments)

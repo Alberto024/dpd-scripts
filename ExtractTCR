@@ -1,0 +1,86 @@
+#!/usr/bin/python3
+
+"""Usage:
+    ExtractTCR [options] <data>
+
+Options:
+    -h, --help
+        Show this screen and exit
+    --version
+        Show version number and exit
+    -d <delim>, --delimiter <delim>
+        Delimiter to use. Default will be a space
+        [default: ,]
+    --mean
+        Return only mean. Default is to calculate
+        both mean and std
+    --std
+        Return only std. Default is to calculate
+        both mean and std
+
+Arguments:
+    <data>
+        Finished data file that contains mean conformation
+        ratio data for each timestep
+"""
+VERSION='Beta Version\nAuthor: Alberto Nava'
+
+################################################################
+# Importations
+################################################################
+
+from docopt import docopt
+import os
+import pandas as pd
+
+################################################################
+# Utilities
+################################################################
+
+def readFile(Args):
+    """	Arguments:
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            Data : pd dataframe; dataframe containing data
+                   information
+        Reads data file and returns a pandas dataframe
+    """
+    if not os.path.exists(Args['<data>']):
+        raise SystemExit('File does not exist: {}'.format(Args['<data>']))
+    Data = pd.read_csv(Args['<data>'],
+                       sep=Args['--delimiter'],
+                       header=0)
+    return Data
+   
+################################################################
+# Main
+################################################################
+
+def main(Args):
+    """	Arguments:
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            None
+    """
+    ############################################################
+    # Setup
+    ############################################################
+    Data = readFile(Args)
+    ############################################################
+    # Execution
+    ############################################################
+    Temp, Sp = Args['<data>'].split('_')[0].split('-')
+    Mean = Data.Mean_Ratio.mean()
+    Std = Data.Mean_Ratio.std()
+    if Args['--mean']:
+        echo = str(Mean)
+    elif Args['--std']:
+        echo = str(Std)
+    else:
+        echo = ','.join(str(value) for value in [Temp,Sp,Mean,Std])
+    print(echo)
+
+################################################################
+if __name__ == '__main__':
+    arguments = docopt(__doc__, version=VERSION)
+    main(arguments)

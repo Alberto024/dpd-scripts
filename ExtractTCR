@@ -13,10 +13,10 @@ Options:
         [default: ,]
     --mean
         Return only mean. Default is to calculate
-        both mean and std
-    --std
-        Return only std. Default is to calculate
-        both mean and std
+        both mean and var
+    --var
+        Return only variance. Default is to calculate
+        both mean and var
 
 Arguments:
     <data>
@@ -71,13 +71,13 @@ def main(Args):
     ############################################################
     Temp, Sp = Args['<data>'].split('_')[0].split('-')
     Mean = Data.Mean_Ratio.mean()
-    Std = Data.Mean_Ratio.std()
+    Var = Data.Var_Ratio.mean()
     if Args['--mean']:
         echo = str(Mean)
-    elif Args['--std']:
-        echo = str(Std)
+    elif Args['--var']:
+        echo = str(Var)
     else:
-        echo = ','.join(str(value) for value in [Temp,Sp,Mean,Std])
+        echo = ','.join(str(value) for value in [Temp,Sp,Mean,Var])
     print(echo)
 
 ################################################################

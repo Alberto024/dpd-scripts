@@ -17,8 +17,8 @@ Options:
     --mean
         Use this option to plot only the mean (3rd column).
         Default is to plot only mean
-    --std
-        Use this option to plot only the std (4th column)
+    --var
+        Use this option to plot only the var (4th column)
         Default is to plot only mean
     -s <style>, --style <style>
         Line style plotted by matplotlib [default: o-]
@@ -68,9 +68,9 @@ def main(Arguments):
     if Arguments['--mean']:
         ax.plot_trisurf(Data[0],Data[1],Data[2],cmap='jet')
         zName = 'Mean Conformation Ratio'
-    elif Arguments['--std']:
+    elif Arguments['--var']:
         ax.plot_trisurf(Data[0],Data[1],Data[3],cmap='jet')
-        zName = 'root standard deviation of conformation ratio'
+        zName = 'root variance of conformation ratio'
     else:
         ax.plot_trisurf(Data[0],Data[1],Data[2],cmap='jet')
         zName = 'Mean Conformation Ratio'

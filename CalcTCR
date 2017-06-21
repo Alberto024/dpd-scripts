@@ -184,7 +184,7 @@ def calcConformationRatio(TimestepData, Args):
     conformationRatio = np.divide(Torsion,Curvature)
     #print(conformationRatio)
     meanConformation = conformationRatio.mean()
-    varConformation = conformationRatio.std()
+    varConformation = conformationRatio.var()
     #print(meanConformation,varConformation)
 
     #endTime = timer()
@@ -293,7 +293,7 @@ def writeResults(results, Args):
     else:
         name = Args['--outfile']
     with open(name,'w') as F:
-        F.write('\n'.join(['Mean_Ratio,StdDev_Ratio']+[','.join([str(a),str(b)]) for a,b in results]))
+        F.write('\n'.join(['Mean_Ratio,Var_Ratio']+[','.join([str(a),str(b)]) for a,b in results]))
     
 ################################################################
 # Main
@@ -321,11 +321,11 @@ def main(Args):
     with mp.Pool(maxCPU) as P:
         simRatios = P.map(partial(calcConformationRatio, Args=Args), Simulation, chunksize=checkChunksize(Args))
     writeResults(simRatios, Args)
-    simValues = np.array([a for a,b in simRatios])
-    simAve = str(simValues.mean())
-    simStd = str(simValues.std())
     if not Args['--quiet']:
-        print(','.join([simAve,simStd]))
+        simValues = np.array([a for a,b in simRatios])
+        simAve = str(simValues.mean())
+        simVar = str(simValues.var())
+        print(','.join([simAve,simVar]))
     ############################################################
     # Cleanup
     ############################################################

@@ -9,11 +9,22 @@ Options:
     --version
         Show version number and exit
     -d <delim>, --delimiter <delim>
-        Delimiter to use [default: ,]
+        Delimiter to use. Default will be a space
+        [default:  ]
+    -o <outfile>, --outfile <outfile>
+        Name of file to write data to
+        [default: <basename>.helix.dat]
+    --quiet
+        Use option if you do not wish to print out
+        simulation average and std dev
+    -t <threads>, --threads <threads>
+        Amount of threads to use for calculations.
+        Default is to only use 1.
+        [default: 1]
 
 Arguments:
     <data>
-        file with coordinates
+        XYZ format file from lammps that contains coordinates
 """
 VERSION='Beta Version\nAuthor: Alberto Nava'
 
@@ -23,18 +34,52 @@ VERSION='Beta Version\nAuthor: Alberto Nava'
 
 from docopt import docopt
 import os
+import subprocess
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-plt.style.use('ggplot')
-from numba import njit,jit
+import multiprocessing as mp
+from functools import partial
+#import matplotlib.pyplot as plt
+#from mpl_toolkits.mplot3d import Axes3D
+#plt.style.use('ggplot')
 from timeit import default_timer as timer
 from time import strftime,gmtime
+from pprint import pprint
+#from numba import njit, jit
+
 
 ################################################################
 # Utilities
 ################################################################
+
+def getBasename(Args):
+    """	Arguments:
+            Args : 
+        Returns:
+            None
+    """
+    return '.'.join(Args['<data>'].split('.')[:-1])
+
+def checkMaxCPU(arguments):
+    """ Arguments:
+            arguments : dictionary; CLI arguments from docopt
+        Returns:
+            int or None; the max number of CPU to use, if None
+                         then there is no limit
+        Checks --threads option from CLI, if option not given
+        then default is to use all available CPU
+    """
+    # Returning a maximum CPU value if given
+    if arguments['--threads']:
+        if arguments['--threads'].isdigit():
+            Max = int(arguments['--threads'])
+            if Max <= os.cpu_count() and Max > 0:
+                return Max
+            else:
+                raise SystemExit('--threads argument not valid')
+        else:
+            raise SystemExit('Invalid value to --threads: {}'.format(
+                        arguments['--threads']))
 
 def readFile(Args):
     """	Arguments:
@@ -44,39 +89,54 @@ def readFile(Args):
                    information
         Reads data file and returns a pandas dataframe
     """
-    Data = pd.read_csv(Args['<data>'],
+    if not os.path.exists(Args['<data>']):
+        raise SystemExit('File does not exist: {}'.format(Args['<data>']))
+    newFile = getBasename(Args)+'.purecoord.tab'
+    command = r"""grep -E '^1' {filename} | awk -F' ' '{{print $2,$3,$4}}' > {newfile}"""
+    context = {
+            "filename": Args['<data>'],
+            "newfile": newFile
+            }
+    subprocess.run(command.format(**context),
+                    shell=True,
+                    check=True,
+                    executable='/bin/bash')
+    Data = pd.read_csv(newFile,
                        sep=Args['--delimiter'],
-                       header=None)
-    return Data
+                       header=None,
+                       names=['X','Y','Z'])
+    timestep = [ts for ts in range(int(Data.shape[0]/20)) for atom in range(20)]
+    Data.insert(0,'Timestep',timestep)
+    Dataframe = Data.groupby('Timestep')
+    return Dataframe
 
-@njit
-def multidet(a,b,c):
-    n=a.shape[0]
-    d=np.empty(n)
-    for i in range(n):
-        u,v,w=a[i],b[i],c[i]
-        d[i]=\
-        u[0]*(v[1]*w[2]-v[2]*w[1])+\
-        u[1]*(v[2]*w[0]-v[0]*w[2])+\
-        u[2]*(v[0]*w[1]-v[1]*w[0])  # 14 operations / det
-    return d
+##@njit
+##def multidet(a,b,c):
+##    n=a.shape[0]
+##    d=np.empty(n)
+##    for i in range(n):
+##        u,v,w=a[i],b[i],c[i]
+##        d[i]=\
+##        u[0]*(v[1]*w[2]-v[2]*w[1])+\
+##        u[1]*(v[2]*w[0]-v[0]*w[2])+\
+##        u[2]*(v[0]*w[1]-v[1]*w[0])  # 14 operations / det
+##    return d
 
-################################################################
-# Main
-################################################################
-
-def main(Args):
+def calcConformationRatio(TimestepData, Args):
     """	Arguments:
-            Args : dict; CLI arguments given to docopt
+            TimestepData :
+            Args :
         Returns:
             None
     """
+    r = np.array(list(zip(TimestepData[1].X.values,
+                          TimestepData[1].Y.values,
+                          TimestepData[1].Z.values)))
+
     ############################################################
     # Need first, second, and third derivatives no matter what
     ############################################################
-    Data = readFile(Args).sort_values(0)
-    X,Y,Z = Data[2],Data[3],Data[4]
-    r = np.array(list(zip(X,Y,Z)))
+
     r1 = np.gradient(r,axis=0)
     r2 = np.gradient(r1,axis=0)
     r3 = np.gradient(r2,axis=0)
@@ -85,25 +145,42 @@ def main(Args):
     # Method 1: Gram-Schmidt Procedure to create orthonormal
     # basis set
     ############################################################
-    beginTime = timer()
+    #beginTime = timer()
 
-    allTNB = np.array([np.linalg.qr(np.array([r1[ts],r2[ts],r3[ts]]))[0] for ts in range(r.shape[0])])
+    allTNB = np.array([np.linalg.qr(np.array([r1[ts],r2[ts],r3[ts]]),mode='reduced')[0] for ts in range(r.shape[0])])
     Tangent = allTNB[:,0]
     Normal = allTNB[:,1]
     Binormal = allTNB[:,2]
-    Torsion = np.array([np.dot(-p,bprime) for p,bprime in zip(Normal,np.gradient(Binormal,axis=1))])
+    Torsion = np.einsum('ij,ij->i',-Normal,np.gradient(Binormal,axis=1))
     Curvature = np.linalg.norm(r2,axis=1)
     #print(Torsion)
     #print(Curvature)
-    conformationRatio = np.array([Torsion[i]/Curvature[i] for i in range(Torsion.shape[0])])
+    conformationRatio = np.divide(Torsion,Curvature)
     #print(conformationRatio)
     meanConformation = conformationRatio.mean()
     varConformation = conformationRatio.std()
-    print(meanConformation,varConformation)
+    #print(meanConformation,varConformation)
 
-    endTime = timer()
-    print('Method 1 Total time elapsed: {}'.format(
-        str(strftime('%H:%M:%S.%f', gmtime(endTime - beginTime)))))
+    #endTime = timer()
+    #print('Method 1 Total time elapsed: {:.5f} s'.format(endTime-beginTime))
+        #str(strftime('%H:%M:%S', gmtime(endTime - beginTime)))))
+    return meanConformation, varConformation
+
+
+def calcConformationRatio2(TimestepData, Args):
+    """	Arguments:
+            TimestepData :
+            Args :
+        Returns:
+            None
+    """
+    r = np.array(list(zip(TimestepData.X,
+                          TimestepData.Y,
+                          TimestepData.Z)))
+    r1 = np.gradient(r,axis=0)
+    r2 = np.gradient(r1,axis=0)
+    r3 = np.gradient(r2,axis=0)
+
     ############################################################
     # Method 2: Shortcut to torsion and curvature through clever
     # cross products, triple products, and inner products
@@ -122,11 +199,26 @@ def main(Args):
 
     #endTime = timer()
     #print('Method 2 Total time elapsed: {}'.format(
+    #print('Method 2 Total time elapsed: {:.5f} s'.format(endTime-beginTime))
     #    str(strftime('%H:%M:%S.%f', gmtime(endTime - beginTime)))))
 
+def calcConformationRatio3(TimestepData, Args):
+    """	Arguments:
+            TimestepData :
+            Args :
+        Returns:
+            None
+    """
+    r = np.array(list(zip(TimestepData.X,
+                          TimestepData.Y,
+                          TimestepData.Z)))
+    r1 = np.gradient(r,axis=0)
+    r2 = np.gradient(r1,axis=0)
+    r3 = np.gradient(r2,axis=0)
+    
     ############################################################
     # Method 3: Shortcut to torsion and curvature taking
-    # advantage of the numba capablities
+    # advantage of numba capablities
     ############################################################
     #beginTime = timer()
 
@@ -142,18 +234,11 @@ def main(Args):
 
     #endTime = timer()
     #print('Method 3 Total time elapsed: {}'.format(
+    #print('Method 3 Total time elapsed: {:.5f} s'.format(endTime-beginTime))
     #    str(strftime('%H:%M:%S.%f', gmtime(endTime - beginTime)))))
 
-    ############################################################
-    # Check that each set is orthonormal
-    ############################################################
-    ##print(np.linalg.norm(Tangent,axis=1))
-    ##print(np.linalg.norm(Normal,axis=1))
-    ##print(np.linalg.norm(Binormal,axis=1))
-    ##print([np.dot(a,b) for a,b in zip(Tangent,Normal)])
-    ##print([np.dot(a,b) for a,b in zip(Tangent,Binormal)])
-    ##print([np.dot(a,b) for a,b in zip(Normal,Binormal)])
-
+def conformationPlotting(data):
+    pass
     ############################################################
     # Plotting
     ############################################################
@@ -169,6 +254,57 @@ def main(Args):
     #endTime = timer()
     #print('Total time elapsed: {}'.format(
     #    str(strftime('%H:%M:%S', gmtime(endTime - beginTime)))))
+
+def writeResults(results, Args):
+    """	Arguments:
+            results :
+            Args : 
+        Returns:
+            None
+    """
+    if arguments['--outfile'] == '<basename>.helix.dat':
+        name = getBasename(Args) + '.helix.dat'
+    else:
+        name = Args['--outfile']
+    with open(name,'w') as F:
+        F.write('\n'.join(['Mean Ratio,StdDev Ratio']+[','.join([str(a),str(b)]) for a,b in results]))
+    
+################################################################
+# Main
+################################################################
+
+def main(Args):
+    """	Arguments:
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            None
+    """
+    ############################################################
+    # Setup
+    ############################################################
+    beginTime = timer()
+    Simulation = readFile(Args)
+    maxCPU = checkMaxCPU(Args)
+    ############################################################
+    # Execution
+    ############################################################
+    simRatios = []
+    #for timestep in Simulation:
+    #    simRatios.append(calcConformationRatio(timestep, Args))
+    beginTime = timer()
+    with mp.Pool(maxCPU) as P:
+        simRatios = P.map(partial(calcConformationRatio, Args=Args), Simulation, chunksize=40)
+    writeResults(simRatios, Args)
+    simValues = np.array([a for a,b in simRatios])
+    simAve = str(simValues.mean())
+    simStd = str(simValues.std())
+    if not Args['--quiet']:
+        print(','.join([simAve,simStd]))
+    ############################################################
+    # Cleanup
+    ############################################################
+    endTime = timer()
+    print('Total time elapsed: {:.5f} s'.format(endTime-beginTime))
 
 ################################################################
 if __name__ == '__main__':

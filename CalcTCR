@@ -21,6 +21,12 @@ Options:
         Amount of threads to use for calculations.
         Default is to only use 1.
         [default: 1]
+    -c <chunksize>, --chunksize <chunksize>
+        Size of chunk to use for multiprocessing map
+        Multiprocessing threads get created for every
+        simulation timestep. Argument must be a positive
+        integer
+        [default: 40]
 
 Arguments:
     <data>
@@ -80,6 +86,26 @@ def checkMaxCPU(arguments):
         else:
             raise SystemExit('Invalid value to --threads: {}'.format(
                         arguments['--threads']))
+
+def checkChunksize(arguments):
+    """ Arguments:
+            arguments : dictionary; CLI arguments from docopt
+        Returns:
+            int or None; the max number of CPU to use, if None
+                         then there is no limit
+        Checks --chunksize option from CLI,
+    """
+    # Returning a maximum CPU value if given
+    if arguments['--chunksize']:
+        if arguments['--chunksize'].isdigit():
+            Max = int(arguments['--chunksize'])
+            if Max > 0:
+                return Max
+            else:
+                raise SystemExit('--chunksize argument not valid')
+        else:
+            raise SystemExit('Invalid value to --chunksize: {}'.format(
+                        arguments['--chunksize']))
 
 def readFile(Args):
     """	Arguments:
@@ -267,7 +293,7 @@ def writeResults(results, Args):
     else:
         name = Args['--outfile']
     with open(name,'w') as F:
-        F.write('\n'.join(['Mean Ratio,StdDev Ratio']+[','.join([str(a),str(b)]) for a,b in results]))
+        F.write('\n'.join(['Mean_Ratio,StdDev_Ratio']+[','.join([str(a),str(b)]) for a,b in results]))
     
 ################################################################
 # Main
@@ -293,7 +319,7 @@ def main(Args):
     #    simRatios.append(calcConformationRatio(timestep, Args))
     beginTime = timer()
     with mp.Pool(maxCPU) as P:
-        simRatios = P.map(partial(calcConformationRatio, Args=Args), Simulation, chunksize=40)
+        simRatios = P.map(partial(calcConformationRatio, Args=Args), Simulation, chunksize=checkChunksize(Args))
     writeResults(simRatios, Args)
     simValues = np.array([a for a,b in simRatios])
     simAve = str(simValues.mean())

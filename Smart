@@ -1,0 +1,441 @@
+#!/usr/bin/python3
+
+# NOTE: MUST EXECUTE ON A NODE
+
+"""Usage:
+    Smart [options]
+
+Options:
+    -h, --help
+        Show this help then exit
+    --version
+        Show version number
+    -c <coordfile>, --coordinates <coordfile>
+        File that contains comma separated
+        coordinates of initial configuration
+    -H <hosts>, --hosts <hosts>
+        Comma separated list of nodes to execute on
+        [default: compute-3-1,compute-3-2,compute-3-3,compute-3-4]
+    -t <threads>, --threads <threads>
+        Number of MPI threads to execute
+        [default: 48]"""
+#
+#Arguments:
+#    <hosts>
+#        MPI hosts to execute on"""
+VERSION='Beta Version\nAuthor: Alberto Nava'
+
+################################################################
+# Importations
+################################################################
+
+from docopt import docopt
+import pandas as pd
+import numpy as np
+from bayes_opt import BayesianOptimization
+from timeit import default_timer as timer
+from time import strftime, gmtime
+from pprint import pprint
+import os
+import json
+import matplotlib.pyplot as plt
+import MakeLIn
+import MakeLStruct
+import CalcCv
+import CalcTCR
+import glob
+
+################################################################
+# Utilities
+################################################################
+
+def checkMaxCPU(arguments):
+    """ Arguments:
+            arguments : dictionary; CLI arguments from docopt
+        Returns:
+            int or None; the max number of CPU to use, if None
+                         then there is no limit
+        Checks --threads option from CLI, if option not given
+        then default is to use all available CPU
+    """
+    # Returning a maximum CPU value if given
+    if arguments['--threads']:
+        if arguments['--threads'].isdigit():
+            Max = int(arguments['--threads'])
+            if Max > 0:
+                return Max
+            else:
+                raise SystemExit('--threads less than 0')
+        else:
+            raise SystemExit('Invalid value to --threads: {}'.format(
+                        arguments['--threads']))
+
+def getExecutionDir():
+    """	Arguments:
+            None
+        Returns:
+            newName : str; name for next input file
+        Looks for input files in current directory to find a 
+        name that would work for next input file
+    """
+    templateName = os.path.join(os.getcwd, "BayOpt_DPD_{:04d}")
+    run = 1
+    while True:
+        newName = templateName.format(run)
+        if not os.path.isdir(newName):
+            break
+        run += 1 
+    return newName
+
+def sigmoid(x, lb, ub, mp, k=1):
+    """	Arguments:
+            x : np array; x-values
+            lb : float; lower bound of curve
+            ub : float; upper bound of curve
+            mp : float; midpoint temperature
+            k : float; steepness parameter
+        Returns:
+            Sigmoid function
+    """
+    return lb + ub/(1 + np.exp(-k*(x - mp)))
+
+def targetFunction(
+            dpd_strength,
+            dpd_gamma,
+            dpd_cutoff,
+            bond_strength,
+            bond_length,
+            angle_strength,
+            angle_angle,
+            dihedral_A,
+            dihedral_B,
+            dihedral_C,
+            sb_bond,
+            sb_angle,
+            sb_dihedral):
+    """	Arguments:
+            "dpd_strength":     (1, 300),
+            "dpd_gamma":        (1, 300),
+            "dpd_cutoff":       (1, 20),
+            "bond_strength":    (50, 300),
+            "bond_length":      (1, 8),
+            "angle_strength":   (50, 300),
+            "angle_angle":      (100, 180),
+            "dihedral_A":       (1, 300),
+            "dihedral_B":       (1, 300),
+            "dihedral_C":       (1, 300),
+            "sb_bond":          (0.01, 1),
+            "sb_angle":         (0.01, 1),
+            "sb_dihedral":      (0.01, 1),
+        Returns:
+            MAGIC_PARAMETER : float; parameter to describe
+                                success of simulation
+        Target Function that takes parameters which change the
+        behavior of the simulation
+    """
+    ############################################################
+    # Setting temperatures to execute
+    ############################################################
+
+    Temperatures = [10,100,200,300,500]
+
+    ############################################################
+    # Preparing Simulation
+    ############################################################
+
+    jsonContext = {
+        "templist": Temperatures,
+        "dpdstrength": dpd_strength,
+        "dpdgamma": dpd_gamma,
+        "dpdcutoff": dpd_cutoff,
+        "bondstrength": bond_strength,
+        "bondlength": bond_length,
+        "anglestrength": angle_strength,
+        "angleangle": angle_angle,
+        "dihedrala": dihedral_A,
+        "dihedralb": dihedral_B,
+        "dihedralc": dihedral_C,
+        "sbbond": sb_bond,
+        "sbangle": sb_angle,
+        "sbdihedral": sb_dihedral
+        }
+
+    execDir = getExecutionDir()
+    try:
+        os.mkdir(execDir)
+    except:
+        raise SystemExit('Could not make directory:\n\t{}'.format(execDir))
+
+    configName = os.path.join(execDir, "bodpd_config.json")
+    with open(configName, 'w') as ConfigFile:
+        json.dump(jsonContext,
+                  ConfigFile,
+                  sort_keys=True,
+                  indent=4)
+
+    MakeLIn.main({
+        '<configfile>': configName,
+        '--title': 'DPD Polymer Simulation Config Script',
+        '--outfile': os.path.join(execDir, 'Polymer.in')
+        })
+    MakeLStruct.main({
+        '<coordinates>': ARGS['<coordinates>'],
+        '--delimiter': ',',
+        '--title': 'DPD Polymer Simulation Config Geometry',
+        '--outfile': os.path.join(execDir, 'Polymer.dat')
+        })
+
+    ############################################################
+    # Executing Simulation
+    ############################################################
+
+    os.chdir(execDir)
+    numberProcesses = checkMaxCPU(ARGS)
+    mpiCommand = """OMP_NUM_THREADS=1 mpirun -np {THREADS} -hosts {HOSTS} lmp_intel_omp -partition {THREADS}x1 {INFILE}"""
+    MpiContext = {
+            "THREADS": numberProcesses,
+            "HOSTS": ARGS['--hosts'],
+            "INFILE": os.path.join(execDir, 'Polymer.in')
+            }
+    subprocess.run(mpiCommand.format(**MpiContext),
+            shell=True,
+            check=True,
+            executable='/bin/bash')
+
+    ############################################################
+    # Collecting Results
+    ############################################################
+
+    extractThermoData = """for file in *dpdpolymer*log; do Extractlammps $file; done"""
+    subprocess.run(extractThermoData,
+            shell=True,
+            check=True,
+            executable='/bin/bash')
+
+    CvArgs = {
+            "<data>": "placeholder",
+            "<temp>": "placeholder",
+            "--delimiter": ",",
+            "--column": "PotEng"
+            }
+    specificHeats = ["Temperature,Cv"]
+    for sim in glob.glob(os.path.join(execDir, "*purethermo*data")):
+        simTemperature = os.path.basename(sim).split('_')[0]
+        CvArgs["<data>"] = sim
+        CvArgs["<temp>"] = simTemperature
+        nextLine = ','.join([simTemperature,
+                             str(CalcCv.calculateCv(
+                                        CalcCv.readFile(CvArgs),
+                                        CvArgs))
+                            ])
+        specificHeats.append(nextLine)
+    with open(os.path.join(execDir, 'CV.log'), 'w') as Cvlog:
+        Cvlog.write('\n'.join(specificHeats))
+
+    TCRArgs = {
+            "<data>": "placeholder",
+            "--delimiter": " ",
+            "--outfile": "placeholder",
+            "--threads": "24",
+            "--chunksize": "40",
+            "--quiet": True
+            }
+    for sim in glob.glob(os.path.join(execDir, "*dpdpolymer*coord")):
+        simTemperature = os.path.basename(sim).split('_')[0]
+        newName = '.'.join(os.path.basename(sim).split('.')[:-1])+'.helix.dat'
+        TCRArgs["<data>"] = sim
+        TCRArgs["--outfile"] = os.path.join(execDir, newName)
+        CalcTCR.main(TCRArgs)
+
+    tcrTable = ["Temperature,MeanConformationRatio,AverageVarConformationRatio"]
+    for tcrResult in glob.glob(os.path.join(execDir, "*helix*dat")):
+        simTemperature = os.path.basename(sim).split('_')[0]
+        tcrData = pd.read_csv(tcrResult,
+                              sep=',',
+                              header=0)
+        tcrTable.append(','.join([simTemperature,
+                             str(tcrData.Mean_Ratio.mean()),
+                             str(tcrData.Var_Ratio.mean())]))
+    with open(os.path.join(execDir, "TCR.log"), 'w') as TCRlog:
+        TCRlog.write('\n'.join(tcrTable))
+
+    radiusOfGyration = ["Temperature,RadiusOfGyration"]
+    for sim in glob.glob(os.path.join(execDir, "*purethermo*data")):
+        simTemperature = os.path.basename(sim).split('_')[0]
+        rogData = pd.read_csv(sim,
+                              sep=',',
+                              header=0)
+        radiusOfGyration.append(','.join([simTemperature,
+                                          str(rogData.rog.values.mean())]))
+    with open(os.path.join(execDir, 'ROG.log'), 'w') as ROGlog:
+        ROGlog.write('\n'.join(radiusOfGyration))
+
+    ############################################################
+    # Analyzing Simulation
+    ############################################################
+
+    rogResults = pd.read_csv(os.path.join(execDir, 'ROG.log'),
+                             sep=',',
+                             header=0).sort_values('Temperature')
+    tcrResults = pd.read_csv(os.path.join(execDir, 'TCR.log'),
+                             sep=',',
+                             header=0).sort_values('Temperature')
+    cvResults = pd.read_csv(os.path.join(execDir, 'CV.log'),
+                             sep=',',
+                             header=0).sort_values('Temperature')
+    rogNormalized = ((rogResults - rogResults.mean())/(rogResults.max() - rogResults.min()))+0.5
+    tcrNormalized = ((tcrResults - tcrResults.mean())/(tcrResults.max() - tcrResults.min()))+0.5
+    tempNormalized = rogNormalized.Temperature.values
+
+    rogNormalizedMin = rogNormalized.RadiusOfGyration.min()
+    rogNormalizedMax = rogNormalized.RadiusOfGyration.max()
+    rogNormalizedRange = rogNormalizedMax - rogNormalizedMin
+    tcrNormalizedMin = tcrNormalized.AverageVarConformationRatio.min()
+    tcrNormalizedMax = tcrNormalized.AverageVarConformationRatio.max()
+    tcrNormalizedRange = tcrNormalizedMax - tcrNormalizedMin
+
+    targetROG = sigmoid(tempNormalized,
+                        rogNormalizedMin,
+                        rogNormalizedRange,
+                        0.5,
+                        30)
+    targetTCR = sigmoid(tempNormalized,
+                        tcrNormalizedMin,
+                        tcrNormalizedRange,
+                        0.5,
+                        30)
+    
+    MAGIC_PARAMETER = -sum([
+        ((targetROG - rogNormalized.RadiusOfGyration)**2).sum(),
+        ((targetTCR - tcrNormalized.AverageVarConformationRatio)**2).sum()
+        ])
+                            
+    os.chdir(os.path.join(execDir, '..'))
+
+    return MAGIC_PARAMETER
+
+################################################################
+# Plotting
+################################################################
+#import matplotlib.pyplot as plt
+#from matplotlib import gridspec
+#plt.style.use('ggplot')
+#def posterior(bo, x, xlim):
+#    xmin, xmax = xlim
+#    bo.gp.fit(bo.X, bo.Y)
+#    mu, sigma = bo.gp.predict(x, return_std=True)
+#    return mu, sigma
+#
+#def plot_gp(bo, x, y, xlim):
+#    
+#    #fig = plt.figure(figsize=(16, 10))
+#    fig = plt.figure(figsize=(8,5))
+#    fig.suptitle('Gaussian Process and Utility Function After {} Steps'.format(len(bo.X)), fontdict={'size':30})
+#    
+#    gs = gridspec.GridSpec(2, 1, height_ratios=[3, 1]) 
+#    axis = plt.subplot(gs[0])
+#    acq = plt.subplot(gs[1])
+#    
+#    mu, sigma = posterior(bo, x, xlim)
+#    axis.plot(x, y, linewidth=3, label='Target')
+#    axis.plot(bo.X.flatten(), bo.Y, 'D', markersize=8, label=u'Observations', color='r')
+#    axis.plot(x, mu, '--', color='k', label='Prediction')
+#
+#    axis.fill(np.concatenate([x, x[::-1]]), 
+#              np.concatenate([mu - 1.9600 * sigma, (mu + 1.9600 * sigma)[::-1]]),
+#        alpha=.6, fc='c', ec='None', label='95% confidence interval')
+#    
+#    axis.set_xlim(xlim)
+#    axis.set_ylim((None, None))
+#    axis.set_ylabel('f(x)', fontdict={'size':20})
+#    axis.set_xlabel('x', fontdict={'size':20})
+#    
+#    utility = bo.util.utility(x, bo.gp, 0)
+#    acq.plot(x, utility, label='Utility Function', color='purple')
+#    acq.plot(x[np.argmax(utility)], np.max(utility), '*', markersize=15, 
+#             label=u'Next Best Guess', markerfacecolor='gold', markeredgecolor='k', markeredgewidth=1)
+#    acq.set_xlim(xlim)
+#    acq.set_ylim((0, np.max(utility) + 0.5))
+#    acq.set_ylabel('Utility', fontdict={'size':20})
+#    acq.set_xlabel('x', fontdict={'size':20})
+#    
+#    axis.legend(loc=2, bbox_to_anchor=(1.01, 1), borderaxespad=0.)
+#    acq.legend(loc=2, bbox_to_anchor=(1.01, 1), borderaxespad=0.)
+#
+#    plt.show()
+
+################################################################
+# Main
+################################################################
+
+def main(Arguments):
+    """	Arguments:
+            Arguments : dict; CLI arguments from docopt
+        Returns:
+            None
+    """
+    beginTime = timer()
+    ############################################################
+    # Just for viz
+    #x = np.linspace(1, 500, 100).reshape(-1, 1)
+    #y = targetFunction(x)
+    #y = sigmoid(x, 10, 1000, 225)
+    ############################################################
+
+    varDomain = {
+            "dpd_strength":     (1, 300),
+            "dpd_gamma":        (1, 300),
+            "dpd_cutoff":       (1, 20),
+            "bond_strength":    (50, 300),
+            "bond_length":      (1, 8),
+            "angle_strength":   (50, 300),
+            "angle_angle":      (100, 180),
+            "dihedral_A":       (1, 300),
+            "dihedral_B":       (1, 300),
+            "dihedral_C":       (1, 300),
+            "sb_bond":          (0.01, 1),
+            "sb_angle":         (0.01, 1),
+            "sb_dihedral":      (0.01, 1),
+            }
+    bo = BayesianOptimization(targetFunction,
+                              varDomain)
+    probePoints = {
+            "dpd_strength":     [200.0, 100.0],
+            "dpd_gamma":        [200.0, 100.0],
+            "dpd_cutoff":       [15.0, 20.0],
+            "bond_strength":    [200, 300],
+            "bond_length":      [6.1948, 4.0],
+            "angle_strength":   [100, 200],
+            "angle_angle":      [149, 110],
+            "dihedral_A":       [80, 160],
+            "dihedral_B":       [100, 200],
+            "dihedral_C":       [40, 80],
+            "sb_bond":          [0.5, 1.0],
+            "sb_angle":         [0.5, 1.0],
+            "sb_dihedral":      [0.5, 1.0],
+            }
+    bo.explore(probePoints)
+    #initPoints = {
+    #        "target": [-25, -144],
+    #        "x": [-5, -12]
+    #        }
+    #bo.initialize(initPoints)
+    # kappa = aggressiveness parameter
+    bo.maximize(init_points=3, n_iter=0, acq='ucb', kappa=5)
+    bo.maximize(init_points=0, n_iter=100, acq='ucb', kappa=5)
+    #plot_gp(bo, x, y, (-50,50))
+    #for i in range(100):
+    #    bo.maximize(init_points=0, n_iter=1, acq='ucb', kappa=5)
+    #    #plot_gp(bo, x, y, (-50,50))
+    pprint(bo.res['all'])
+    pprint(bo.res['max'])
+    ############################################################
+    endTime = timer()
+    print('Total time elapsed: {}'.format(
+        str(strftime('%H:%M:%S', gmtime(endTime - beginTime)))))
+
+################################################################
+if __name__ == "__main__":
+    global ARGS
+    ARGS = docopt(__doc__,version=VERSION)
+    main(ARGS)

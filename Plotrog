@@ -1,0 +1,76 @@
+#!/usr/bin/python3
+
+"""Usage:
+    Plotrog [options] <rogfile>
+
+Options:
+    -h, --help
+        Show this help then exit
+    --version
+        Show version number
+    -d <delim>, --delimiter <delim>
+        Specify the delimiter separating the two columns
+        [default: ,]
+    -n, --names
+        Use this option if there are header names i.e. column
+        names
+    -s <style>, --style <style>
+        Line style plotted by matplotlib [default: o-]
+    -t <title>, --title <title>
+        Title shown on plot
+    -o <outputfile>, --output <outputfile>
+        If you wish to save the plot, specify name of graph
+        with this option"""
+VERSION='Beta Version\nAuthor: Alberto Nava'
+
+################################################################
+# Importations
+################################################################
+
+from docopt import docopt
+import os
+import pandas as pd
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from timeit import default_timer as timer
+from time import strftime, gmtime
+plt.style.use('ggplot')
+
+################################################################
+# Main
+################################################################
+
+def main(Arguments):
+    """	Arguments:
+            Arguments : dict; CLI arguments from docopt
+        Returns:
+            None
+    """
+    beginTime = timer()
+    ############################################################
+    if not os.path.exists(Arguments['<rogfile>']):
+        raise SystemExit('File does not exist')
+    if Arguments['--names']:
+        Header=0
+    else:
+        Header=None
+    Data = pd.read_csv(Arguments['<rogfile>'],
+                       sep=Arguments['--delimiter'],
+                       header=Header)
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot_trisurf(Data[0],Data[1],Data[2],cmap='jet')
+    ax.set(xlabel='Temperature (K)',
+           ylabel='Stiffness (special_bonds)',
+           zlabel='Radius of Gyration',
+           title='Radius of Gyration of a DPD-polymer')  
+    plt.show()
+    ############################################################
+    endTime = timer()
+    print('Total time elapsed: {}'.format(
+        str(strftime('%H:%M:%S', gmtime(endTime - beginTime)))))
+
+################################################################
+if __name__ == "__main__":
+    args = docopt(__doc__,version=VERSION)
+    main(args)

@@ -50,14 +50,14 @@ def readFile(Args):
                        header=0)
     return Data
 
-def calculateVar(Data, Args):
+def calculateCv(Data, Args):
     """	Arguments:
             Data : pd dataframe; dataframe containing data info
             Args : dict; CLI arguments given to docopt
         Returns:
-            variance
+            constant volume specific heat capacity
     """
-    return np.var(eval("Data.{}.values".format(Args['--column'])))
+    return np.var(eval("Data.{}.values".format(Args['--column'])))/(float(Args['<temp>']))
 
 ################################################################
 # Main
@@ -73,8 +73,8 @@ def main(Args):
     if not os.path.exists(Args['<data>']):
         raise SystemExit('data file does not exist')
     thermoData = readFile(Args)
-    varEnergy = calculateVar(thermoData, Args)
-    print('{}'.format(varEnergy/(float(Args['<temp>']))))
+    CV = calculateCv(thermoData, Args)
+    print('{}'.format(CV))
     ############################################################
 
 ################################################################

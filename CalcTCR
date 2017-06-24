@@ -48,9 +48,9 @@ from functools import partial
 #import matplotlib.pyplot as plt
 #from mpl_toolkits.mplot3d import Axes3D
 #plt.style.use('ggplot')
-from timeit import default_timer as timer
-from time import strftime,gmtime
-from pprint import pprint
+#from timeit import default_timer as timer
+#from time import strftime,gmtime
+#from pprint import pprint
 #from numba import njit, jit
 
 
@@ -288,7 +288,7 @@ def writeResults(results, Args):
         Returns:
             None
     """
-    if arguments['--outfile'] == '<basename>.helix.dat':
+    if Args['--outfile'] == '<basename>.helix.dat':
         name = getBasename(Args) + '.helix.dat'
     else:
         name = Args['--outfile']
@@ -308,7 +308,7 @@ def main(Args):
     ############################################################
     # Setup
     ############################################################
-    beginTime = timer()
+    #beginTime = timer()
     Simulation = readFile(Args)
     maxCPU = checkMaxCPU(Args)
     ############################################################
@@ -329,8 +329,8 @@ def main(Args):
     ############################################################
     # Cleanup
     ############################################################
-    endTime = timer()
-    print('Total time elapsed: {:.5f} s'.format(endTime-beginTime))
+    #endTime = timer()
+    #print('CalcTCR Total time elapsed: {:.5f} s'.format(endTime-beginTime))
 
 ################################################################
 if __name__ == '__main__':

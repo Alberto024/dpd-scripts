@@ -219,7 +219,7 @@ def main(Args):
     saveDataFile(completeData, Args)
     ############################################################
     endTime = timer()
-    print('Total time elapsed: {}'.format(
+    print('Make lammps geometry file total time elapsed: {}'.format(
         str(strftime('%H:%M:%S', gmtime(endTime - beginTime)))))
 
 ################################################################

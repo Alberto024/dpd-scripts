@@ -3,26 +3,24 @@
 # NOTE: MUST EXECUTE ON A NODE
 
 """Usage:
-    Smart [options]
+    Smart [options] <coordfile>
 
 Options:
     -h, --help
         Show this help then exit
     --version
         Show version number
-    -c <coordfile>, --coordinates <coordfile>
-        File that contains comma separated
-        coordinates of initial configuration
     -H <hosts>, --hosts <hosts>
         Comma separated list of nodes to execute on
-        [default: compute-3-1,compute-3-2,compute-3-3,compute-3-4]
+        [default: compute-3-1,compute-3-2,compute-3-3,compute-3-6,compute-3-7,compute-3-8]
     -t <threads>, --threads <threads>
         Number of MPI threads to execute
-        [default: 48]"""
-#
-#Arguments:
-#    <hosts>
-#        MPI hosts to execute on"""
+        [default: 48]
+
+Arguments:
+    <coordfile>
+        File that contains comma separated
+        coordinates of initial configuration"""
 VERSION='Beta Version\nAuthor: Alberto Nava'
 
 ################################################################
@@ -37,6 +35,7 @@ from timeit import default_timer as timer
 from time import strftime, gmtime
 from pprint import pprint
 import os
+import subprocess
 import json
 import matplotlib.pyplot as plt
 import MakeLIn
@@ -78,7 +77,7 @@ def getExecutionDir():
         Looks for input files in current directory to find a 
         name that would work for next input file
     """
-    templateName = os.path.join(os.getcwd, "BayOpt_DPD_{:04d}")
+    templateName = os.path.join(os.getcwd(), "BayOpt_DPD_{:04d}")
     run = 1
     while True:
         newName = templateName.format(run)
@@ -137,7 +136,7 @@ def targetFunction(
     # Setting temperatures to execute
     ############################################################
 
-    Temperatures = [10,100,200,300,500]
+    Temperatures = list(range(50,610,20))
 
     ############################################################
     # Preparing Simulation
@@ -179,7 +178,7 @@ def targetFunction(
         '--outfile': os.path.join(execDir, 'Polymer.in')
         })
     MakeLStruct.main({
-        '<coordinates>': ARGS['<coordinates>'],
+        '<coordinates>': ARGS['<coordfile>'],
         '--delimiter': ',',
         '--title': 'DPD Polymer Simulation Config Geometry',
         '--outfile': os.path.join(execDir, 'Polymer.dat')
@@ -191,27 +190,36 @@ def targetFunction(
 
     os.chdir(execDir)
     numberProcesses = checkMaxCPU(ARGS)
-    mpiCommand = """OMP_NUM_THREADS=1 mpirun -np {THREADS} -hosts {HOSTS} lmp_intel_omp -partition {THREADS}x1 {INFILE}"""
+    mpiCommand = """{{ OMP_NUM_THREADS=1 mpirun -np {THREADS} -hosts {HOSTS} lmp_intel_omp -partition {THREADS}x1 -in {INFILE}; }} > {LOG} 2>&1"""
     MpiContext = {
             "THREADS": numberProcesses,
             "HOSTS": ARGS['--hosts'],
-            "INFILE": os.path.join(execDir, 'Polymer.in')
+            "INFILE": os.path.join(execDir, 'Polymer.in'),
+            "LOG": os.path.join(execDir, 'Lammps.Runtime.log')
             }
+    print('Executing lammps simulations...')
+    mpiBeginTime = timer()
     subprocess.run(mpiCommand.format(**MpiContext),
             shell=True,
             check=True,
             executable='/bin/bash')
+    mpiEndTime = timer()
+    print('Lammps Total time elapsed: {}'.format(
+        str(strftime('%H:%M:%S', gmtime(mpiEndTime - mpiBeginTime)))))
 
     ############################################################
     # Collecting Results
     ############################################################
 
+    print('Extracting thermo data...')
+    mpiBeginTime = timer()
     extractThermoData = """for file in *dpdpolymer*log; do Extractlammps $file; done"""
     subprocess.run(extractThermoData,
             shell=True,
             check=True,
             executable='/bin/bash')
 
+    print('Calculating Cv...')
     CvArgs = {
             "<data>": "placeholder",
             "<temp>": "placeholder",
@@ -232,11 +240,13 @@ def targetFunction(
     with open(os.path.join(execDir, 'CV.log'), 'w') as Cvlog:
         Cvlog.write('\n'.join(specificHeats))
 
+    print('Calculating TCR...')
+    tcrBeginTime = timer()
     TCRArgs = {
             "<data>": "placeholder",
             "--delimiter": " ",
             "--outfile": "placeholder",
-            "--threads": "24",
+            "--threads": "12",
             "--chunksize": "40",
             "--quiet": True
             }
@@ -249,7 +259,7 @@ def targetFunction(
 
     tcrTable = ["Temperature,MeanConformationRatio,AverageVarConformationRatio"]
     for tcrResult in glob.glob(os.path.join(execDir, "*helix*dat")):
-        simTemperature = os.path.basename(sim).split('_')[0]
+        simTemperature = os.path.basename(tcrResult).split('_')[0]
         tcrData = pd.read_csv(tcrResult,
                               sep=',',
                               header=0)
@@ -258,6 +268,9 @@ def targetFunction(
                              str(tcrData.Var_Ratio.mean())]))
     with open(os.path.join(execDir, "TCR.log"), 'w') as TCRlog:
         TCRlog.write('\n'.join(tcrTable))
+    tcrEndTime = timer()
+    print('TCR Total time elapsed: {}'.format(
+        str(strftime('%H:%M:%S', gmtime(tcrEndTime - tcrBeginTime)))))
 
     radiusOfGyration = ["Temperature,RadiusOfGyration"]
     for sim in glob.glob(os.path.join(execDir, "*purethermo*data")):
@@ -421,17 +434,16 @@ def main(Arguments):
     #        }
     #bo.initialize(initPoints)
     # kappa = aggressiveness parameter
-    bo.maximize(init_points=3, n_iter=0, acq='ucb', kappa=5)
-    bo.maximize(init_points=0, n_iter=100, acq='ucb', kappa=5)
+    bo.maximize(init_points=1, n_iter=0, acq='ucb', kappa=5)
     #plot_gp(bo, x, y, (-50,50))
-    #for i in range(100):
-    #    bo.maximize(init_points=0, n_iter=1, acq='ucb', kappa=5)
+    for i in range(25):
+        bo.maximize(init_points=0, n_iter=1, acq='ucb', kappa=5)
+        pprint(bo.res['all'])
+        pprint(bo.res['max'])
     #    #plot_gp(bo, x, y, (-50,50))
-    pprint(bo.res['all'])
-    pprint(bo.res['max'])
     ############################################################
     endTime = timer()
-    print('Total time elapsed: {}'.format(
+    print('Complete Bayesian Optimization Total time elapsed: {}'.format(
         str(strftime('%H:%M:%S', gmtime(endTime - beginTime)))))
 
 ################################################################

@@ -1,0 +1,98 @@
+#!/usr/bin/python3
+
+"""Usage:
+    ExtractRes [options] <data>
+
+Options:
+    -h, --help
+        Show this screen and exit
+    --version
+        Show version number and exit
+    -o <outfile>, --outfile <outfile>
+        Write results to a file instead
+        of printing it
+    -f, --force
+        If using the --outfile option, will not
+        overwrite any existing files without
+        "--force" option being given
+
+Arguments:
+    <data>
+        File that contains Bayesian Optimization
+        results dictionary
+"""
+VERSION='Beta Version\nAuthor: Alberto Nava'
+
+################################################################
+# Importations
+################################################################
+
+from docopt import docopt
+import os
+import json
+from pprint import pprint,pformat
+
+################################################################
+# Utilities
+################################################################
+
+def readData(Args):
+    """ Arguments:
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            jsonData : dict; dictionary containing input params
+        Reads Bayesian Optimization ['all'] json data
+    """
+    if not os.path.exists(Args['<data>']):
+        raise SystemExit('Data File does not exist: {}'.format(Args['<data>']))
+    with open(Args['<data>'], 'r') as jsonFile:
+        jsonData = json.load(jsonFile)
+    return jsonData
+
+def writeInit(boCommand, Args):
+    """ Arguments:
+            boCommand : str; contains bo.initialize data
+            Args : dict; CLI arguments given to docopt
+        Returns:
+            None
+    """
+    with open(Args['--outfile'], 'w') as F:
+        F.write(boCommand)
+
+################################################################
+# Main
+################################################################
+
+def main(Args):
+    """ Arguments:
+            Args : dict; CLI options from docopt
+        Returns:
+            None
+    """
+    ############################################################
+    Data = readData(Args)
+    initStruct = {
+            'target': Data['values']
+            }
+    for param in Data['params'][0]:
+        initStruct[param] = []
+    for optStep in Data['params']:
+        for param in optStep:
+            initStruct[param].append(optStep[param])
+    initPlugin = 'bo.initialize(\n\t{})'.format(pformat(initStruct,compact=True))
+    if Args['--outfile']:
+        if Args['--force']:
+            writeInit(initPlugin, Args)
+        else:
+            if os.path.exists(Args['--outfile']):
+                print('Cannot overwrite file that exists:\n\t{}'.format(Args['--outfile']))
+            else:
+                writeInit(initPlugin, Args)
+    else:
+        print(initPlugin)
+    ############################################################
+
+################################################################
+if __name__ == '__main__':
+    arguments = docopt(__doc__,version=VERSION)
+    main(arguments)

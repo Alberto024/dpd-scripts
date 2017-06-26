@@ -15,11 +15,15 @@ Options:
         If using the --outfile option, will not
         overwrite any existing files without
         "--force" option being given
+    -j <jsonfile>, --json <jsonfile>
+        Instead of inserting the formatted data
+        into a bo.initialize call, just dump data
+        into a json file
 
 Arguments:
     <data>
-        File that contains Bayesian Optimization
-        results dictionary
+        Comma-separated list of files that contain 
+        Bayesian Optimization results dictionary
 """
 VERSION='Beta Version\nAuthor: Alberto Nava'
 
@@ -36,16 +40,16 @@ from pprint import pprint,pformat
 # Utilities
 ################################################################
 
-def readData(Args):
+def readData(dataPath):
     """ Arguments:
-            Args : dict; CLI arguments given to docopt
+            dataPath : str; path to a BayOpt results json
         Returns:
             jsonData : dict; dictionary containing input params
         Reads Bayesian Optimization ['all'] json data
     """
-    if not os.path.exists(Args['<data>']):
-        raise SystemExit('Data File does not exist: {}'.format(Args['<data>']))
-    with open(Args['<data>'], 'r') as jsonFile:
+    if not os.path.exists(dataPath):
+        raise SystemExit('Data File does not exist: {}'.format(dataPath))
+    with open(dataPath, 'r') as jsonFile:
         jsonData = json.load(jsonFile)
     return jsonData
 
@@ -70,26 +74,38 @@ def main(Args):
             None
     """
     ############################################################
-    Data = readData(Args)
     initStruct = {
-            'target': Data['values']
+            'target': []
             }
-    for param in Data['params'][0]:
-        initStruct[param] = []
-    for optStep in Data['params']:
-        for param in optStep:
-            initStruct[param].append(optStep[param])
-    initPlugin = 'bo.initialize(\n\t{})'.format(pformat(initStruct,compact=True))
-    if Args['--outfile']:
-        if Args['--force']:
-            writeInit(initPlugin, Args)
-        else:
-            if os.path.exists(Args['--outfile']):
-                print('Cannot overwrite file that exists:\n\t{}'.format(Args['--outfile']))
-            else:
-                writeInit(initPlugin, Args)
+    fileNumber = 0
+    for dataFile in Args['<data>'].split(','):
+        Data = readData(dataFile)
+        initStruct['target'] += Data['values']
+        if fileNumber == 0:
+            for param in Data['params'][0]:
+                initStruct[param] = []
+        for optStep in Data['params']:
+            for param in optStep:
+                initStruct[param].append(optStep[param])
+        fileNumber += 1
+    if Args['--json']:
+        with open(Args['--json'], 'w') as BOinit:
+            json.dump(initStruct,
+                      BOinit,
+                      indent=4)
+        print('Formatted BO results into: {}'.format(Args['--json']))
     else:
-        print(initPlugin)
+        initPlugin = 'bo.initialize(\n\t{})'.format(pformat(initStruct,compact=True))
+        if Args['--outfile']:
+            if Args['--force']:
+                writeInit(initPlugin, Args)
+            else:
+                if os.path.exists(Args['--outfile']):
+                    print('Cannot overwrite file that exists:\n\t{}'.format(Args['--outfile']))
+                else:
+                    writeInit(initPlugin, Args)
+        else:
+            print(initPlugin)
     ############################################################
 
 ################################################################

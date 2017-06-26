@@ -16,6 +16,9 @@ Options:
     -t <threads>, --threads <threads>
         Number of MPI threads to execute
         [default: 48]
+    -i <initfile>, --init <initfile>
+        Initialize the bayesian optimization procedure with
+        previous output generated in a json file
 
 Arguments:
     <coordfile>
@@ -42,6 +45,7 @@ import MakeLIn
 import MakeLStruct
 import CalcCv
 import CalcTCR
+import ExtractRes
 import glob
 
 ################################################################
@@ -98,6 +102,25 @@ def sigmoid(x, lb, ub, mp, k=1):
     """
     return lb + ub/(1 + np.exp(-k*(x - mp)))
 
+def initializeBayOpt(Args):
+    """	Arguments:
+            Args : dict; CLI arguments from docopt
+        Returns:
+            dict containing init steps
+    """
+    if not os.path.exists(Args['--init']):
+        raise SystemExit('Init file does not exist')
+    ERargs = {
+            "<data>": Args['--init'],
+            "--outfile": None,
+            "--force": False,
+            "--json": 'BayOpt_init.json'
+            }
+    ExtractRes.main(ERargs)
+    with open('BayOpt_init.json', 'r') as F:
+        jsonData = json.load(F)
+    return jsonData
+
 def targetFunction(
             dpd_strength,
             dpd_gamma,
@@ -136,7 +159,7 @@ def targetFunction(
     # Setting temperatures to execute
     ############################################################
 
-    Temperatures = list(range(50,610,20))
+    Temperatures = list(range(50,650,50))
 
     ############################################################
     # Preparing Simulation
@@ -428,18 +451,24 @@ def main(Arguments):
             "sb_dihedral":      [0.5, 1.0],
             }
     bo.explore(probePoints)
-    #initPoints = {
-    #        "target": [-25, -144],
-    #        "x": [-5, -12]
-    #        }
-    #bo.initialize(initPoints)
+    if Arguments['--init']:
+        initJson = initializeBayOpt(Arguments)
+        bo.initialize(initJson)
     # kappa = aggressiveness parameter
-    bo.maximize(init_points=1, n_iter=0, acq='ucb', kappa=5)
+    bo.maximize(init_points=2, n_iter=0, acq='ucb', kappa=5)
     #plot_gp(bo, x, y, (-50,50))
     for i in range(25):
         bo.maximize(init_points=0, n_iter=1, acq='ucb', kappa=5)
-        pprint(bo.res['all'])
-        pprint(bo.res['max'])
+        with open('BayOpt_Step_{:04d}.json'.format(i), 'w') as BOlog:
+            json.dump(bo.res['all'][-1],
+                      BOlog,
+                      sort_keys=True,
+                      indent=4)
+        with open('BayOpt_Best.json'.format(i), 'w') as BOBestLog:
+            json.dump(bo.res['max'],
+                      BOBestLog,
+                      sort_keys=True,
+                      indent=4)
     #    #plot_gp(bo, x, y, (-50,50))
     ############################################################
     endTime = timer()

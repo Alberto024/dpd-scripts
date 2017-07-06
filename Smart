@@ -3,27 +3,36 @@
 # NOTE: MUST EXECUTE ON A NODE
 
 """Usage:
-    Smart [options] <coordfile>
+    Smart [options]
 
 Options:
     -h, --help
         Show this help then exit
     --version
         Show version number
+    -c <coordinates>, --coords <coordinates>
+        Coordinate file to create geometry file based on
+        [default: /home/alberton/dpd-scripts/20-chain.coord]
+    -i <initfile>, --init <initfile>
+        Initialize the bayesian optimization procedure with
+        previous output generated in a json file
+    --lmp <lmp_executable>
+        Lammps executable
+        [default: /share/apps/lammps/gnu/openmpi_gcc_qlc/bin/lmp_openmpi_omp_navas]
+    --mpi <mpirun_executable>
+        Mpi executable
+        [default: /usr/mpi/gcc/openmpi-1.8.4-qlc/bin/mpirun]
     -H <hosts>, --hosts <hosts>
         Comma separated list of nodes to execute on
         [default: compute-3-1,compute-3-2,compute-3-3,compute-3-6,compute-3-7,compute-3-8]
     -t <threads>, --threads <threads>
-        Number of MPI threads to execute
+        Number of MPI threads to execute. Note that they
+        need to be less or equal to number of temperatures
+        executed
         [default: 48]
-    -i <initfile>, --init <initfile>
-        Initialize the bayesian optimization procedure with
-        previous output generated in a json file
-
-Arguments:
-    <coordfile>
-        File that contains comma separated
-        coordinates of initial configuration"""
+    --mpi-options <options>
+        Other options to add to mpi execution. By default
+        will only specify hosts and threads"""
 VERSION='Beta Version\nAuthor: Alberto Nava'
 
 ################################################################
@@ -108,8 +117,6 @@ def initializeBayOpt(Args):
         Returns:
             dict containing init steps
     """
-    if not os.path.exists(Args['--init']):
-        raise SystemExit('Init file does not exist')
     ERargs = {
             "<data>": Args['--init'],
             "--outfile": None,
@@ -201,7 +208,7 @@ def targetFunction(
         '--outfile': os.path.join(execDir, 'Polymer.in')
         })
     MakeLStruct.main({
-        '<coordinates>': ARGS['<coordfile>'],
+        '<coordinates>': ARGS['--coords'],
         '--delimiter': ',',
         '--title': 'DPD Polymer Simulation Config Geometry',
         '--outfile': os.path.join(execDir, 'Polymer.dat')
@@ -213,12 +220,19 @@ def targetFunction(
 
     os.chdir(execDir)
     numberProcesses = checkMaxCPU(ARGS)
-    mpiCommand = """{{ OMP_NUM_THREADS=1 mpirun -np {THREADS} -hosts {HOSTS} lmp_intel_omp -partition {THREADS}x1 -in {INFILE}; }} > {LOG} 2>&1"""
+    mpiCommand = """{{ OMP_NUM_THREADS=1 {MPI} -np {THREADS} -H {HOSTS}{MPIOTHER} {LMP} -partition {THREADS}x1 -in {INFILE}; }} > {LOG} 2>&1"""
+    if ARGS['--mpi-options']:
+        otherArgs = ' ' + ARGS['--mpi-options']
+    else:
+        otherArgs = ''
     MpiContext = {
             "THREADS": numberProcesses,
             "HOSTS": ARGS['--hosts'],
             "INFILE": os.path.join(execDir, 'Polymer.in'),
-            "LOG": os.path.join(execDir, 'Lammps.Runtime.log')
+            "LOG": os.path.join(execDir, 'Lammps.Runtime.log'),
+            "MPI": ARGS['--mpi'],
+            "LMP": ARGS['--lmp'],
+            "MPIOTHER": otherArgs
             }
     print('Executing lammps simulations...')
     mpiBeginTime = timer()
@@ -302,7 +316,7 @@ def targetFunction(
                               sep=',',
                               header=0)
         radiusOfGyration.append(','.join([simTemperature,
-                                          str(rogData.rog.values.mean())]))
+                                          str(rogData.c_rog.values.mean())]))
     with open(os.path.join(execDir, 'ROG.log'), 'w') as ROGlog:
         ROGlog.write('\n'.join(radiusOfGyration))
 
@@ -457,10 +471,10 @@ def main(Arguments):
     # kappa = aggressiveness parameter
     bo.maximize(init_points=2, n_iter=0, acq='ucb', kappa=5)
     #plot_gp(bo, x, y, (-50,50))
-    for i in range(25):
+    for i in range(50):
         bo.maximize(init_points=0, n_iter=1, acq='ucb', kappa=5)
         with open('BayOpt_Step_{:04d}.json'.format(i), 'w') as BOlog:
-            json.dump(bo.res['all'][-1],
+            json.dump(bo.res['all'],
                       BOlog,
                       sort_keys=True,
                       indent=4)

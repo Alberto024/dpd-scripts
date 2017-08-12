@@ -1,0 +1,637 @@
+#!/usr/bin/python3
+
+'''Usage:
+    Rmic [options] <execdirectory> <requiredstuff>
+
+Options:
+    -h, --help
+        Show this screen and exit
+    --version
+        Show version number and exit
+    -t <threads>, --threads <threads>
+        Amount of threads to use for doing prep
+    -c <cpu>, --cpu <cpu>
+        Amount of threads to use for each sample
+        [default: 18]
+    --force
+        Remove execdirectory if it exists'''
+VERSION='Beta Version\nAuthor: Alberto Nava'
+
+################################################################
+# Importations
+################################################################
+
+from docopt import docopt
+from timeit import default_timer as timer
+from time import strftime, gmtime
+from functools import partial
+import os
+import subprocess
+import shutil
+import stat
+import multiprocessing
+
+################################################################
+# Templates
+################################################################
+
+PACKMOL = """# Packmol Setup -- A. Nava
+#
+# Random Configuration
+#
+
+tolerance 2.0
+filetype pdb
+output {OUTFILE}
+
+structure aot-ionr.pdb
+   number 43
+   inside box -35.0 -35.0 -35.0 35.0 35.0 35.0
+end structure
+
+structure h2o.pdb
+   number {WAT}
+   inside box -35.0 -35.0 -35.0 35.0 35.0 35.0
+end structure
+
+structure nas.pdb
+   number 43
+   inside box -35.0 -35.0 -35.0 35.0 35.0 35.0
+end structure
+
+structure ZR.pdb
+   number {ZRC}
+   inside box -35.0 -35.0 -35.0 35.0 35.0 35.0
+end structure
+
+structure cl.pdb
+   number {CLC}
+   inside box -35.0 -35.0 -35.0 35.0 35.0 35.0
+end structure
+
+structure iso-nh.pdb
+   number 1048
+   inside box -35.0 -35.0 -35.0 35.0 35.0 35.0
+end structure"""
+
+TOPOLOGY = """; Topology file for RM43a
+
+; Force field files to be included
+#include "ffcharmm27.itp"
+#include "aot.itp"
+#include "tip3.itp"
+#include "nas.itp"
+#include "zr.itp"
+#include "iso.itp"
+#include "cls.itp"
+
+[ system ]
+Water and AOT
+
+[ molecules ]
+AOT        43
+TIP      {WAT}
+NAS        43
+ZRS      {ZRC}
+CLS      {CLC}
+ISO      1048"""
+
+EMIN = """; Energy minimization program
+
+include         = -I{FFPATH}
+constraints     = none
+integrator      = steep
+dt              = 0.002    ; ps !
+nsteps          = 50000
+nstlist         = 20
+ns_type         = grid
+rlist           = 1.0
+cutoff-scheme   = group
+coulombtype     = PME      ; Use particle-mesh ewald
+rcoulomb        = 1.0
+vdwtype         = user
+energygrps      = ZRS
+energygrp_table = ZRS ZRS
+rvdw            = 1.0
+fourierspacing  = 0.12
+fourier_nx      = 0
+fourier_ny      = 0
+fourier_nz      = 0
+pme_order       = 4
+ewald_rtol      = 1e-5
+;
+;       Energy minimizing stuff
+;
+emtol           = 100.0
+emstep          = 0.01"""
+
+NVT = """; NVT Equilibration
+include                  = -I{FFPATH}
+
+; RUN CONTROL PARAMETERS
+integrator               = md
+
+; Start time and timestep in ps
+tinit                    = 0
+dt                       = 0.001
+nsteps                   = 500000
+
+; Output frequency for coords (x), velocities (v) and forces (f)
+nstxout                  = 50000
+nstvout                  = 50000
+nstfout                  = 0
+
+; Output frequency for energies to log file and energy file
+nstlog                   = 10000
+nstenergy                = 10000
+
+; NEIGHBORSEARCHING PARAMETERS
+cutoff-scheme            = group
+nstlist                  = 10
+ns_type                  = grid
+pbc                      = xyz
+periodic-molecules       = no
+rlist                    = 1.0
+
+; OPTIONS FOR ELECTROSTATICS AND VDW
+rcoulomb                 = 1.0
+coulombtype              = PME
+rvdw                     = 1.0
+vdw-type                 = user
+energygrps               = ZRS
+energygrp_table          = ZRS ZRS
+fourierspacing           = 0.12
+fourier_nx               = 0
+fourier_ny               = 0
+fourier_nz               = 0
+pme_order                = 4
+ewald_rtol               = 1e-5
+
+; Temperature coupling
+tcoupl                   = v-rescale
+tc-grps                  = System
+tau-t                    = 0.1
+ref-t                    = 300
+
+; No Pressure Coupling!
+;pcoupl                   = berendsen
+;pcoupltype               = Isotropic
+;tau-p                    = 1.0
+;compressibility          = 5.0e-5
+;ref-p                    = 1.0
+
+; GENERATE VELOCITIES FOR STARTUP RUN
+gen-vel                  = yes
+gen-temp                 = 300
+gen-seed                 = 17352
+
+; OPTIONS FOR BONDS
+constraints              = all-bonds
+; Do not constrain the start configuration
+continuation             = yes"""
+
+NPT = """; NPT Production Run
+include                  = -I{FFPATH}
+
+; RUN CONTROL PARAMETERS
+integrator               = md
+
+; Start time and timestep in ps
+tinit                    = 0
+dt                       = 0.002
+nsteps                   = 20000000
+
+; Output frequency for coords (x), velocities (v) and forces (f)
+nstxout                  = 50000
+nstvout                  = 50000
+nstfout                  = 0
+
+; Output frequency for energies to log file and energy file
+nstlog                   = 10000
+nstenergy                = 10000
+
+; NEIGHBORSEARCHING PARAMETERS
+cutoff-scheme            = group
+nstlist                  = 10
+ns_type                  = grid
+pbc                      = xyz
+periodic-molecules       = no
+rlist                    = 1.0
+
+; OPTIONS FOR ELECTROSTATICS AND VDW
+rcoulomb                 = 1.0
+coulombtype              = PME
+rvdw                     = 1.0
+vdw-type                 = user
+energygrps               = ZRS
+energygrp_table          = ZRS ZRS
+fourierspacing           = 0.12
+fourier_nx               = 0
+fourier_ny               = 0
+fourier_nz               = 0
+pme_order                = 4
+ewald_rtol               = 1e-5
+
+; Temperature coupling
+tcoupl                   = v-rescale
+tc-grps                  = System
+tau-t                    = 0.1
+ref-t                    = 300
+
+; Pressure coupling
+pcoupl                   = berendsen
+pcoupltype               = Isotropic
+tau-p                    = 1.0
+compressibility          = 5.0e-5
+ref-p                    = 1.0
+
+; GENERATE VELOCITIES FOR STARTUP RUN
+gen-vel                  = no
+gen-temp                 = 300
+gen-seed                 = 17352
+
+; OPTIONS FOR BONDS
+constraints              = all-bonds
+; Do not constrain the start configuration
+continuation             = yes"""
+
+EXEC = """#!/bin/bash
+
+#==============================================================#
+# Energy Minimization
+#==============================================================#
+cd {EMDIR}
+{{ time -p gmx mdrun -nice 0 -v -s {EMINPUT} -deffnm {EMDEFF} -nt {CPU}; }} >> {EMLOG} 2&>1
+{{ time -p echo q | gmx make_ndx -f {EMINGRO} -o {EMINNDX}; }} >> {NDXLOG} 2&>1
+cp {EMINNDX} {NVTNDX}
+cp {EMINNDX} {NPTNDX}
+cp {EMINGRO} {NVTGRO}
+cp {EMINGRO} {NPTGRO}
+
+#==============================================================#
+# NVT Equilibration
+#==============================================================#
+cd {NVTDIR}
+{{ time -p gmx grompp -f {NVTINPUT} -n {NVTNDX} -p {NVTTOP} -c {NVTGRO} -o {NVTEXEC} -maxwarn 1; }} >> {NVTGROMPPLOG} 2&>1
+{{ time -p gmx mdrun -nice 0 -v -s {NVTEXEC} -deffnm {NVTDEFF} -nt {CPU}; }} >> {NVTLOG} 2&>1
+{{ time -p echo '7 8 9 0' | gmx energy -f {NVTEDR} -o {NVTXVG}; }} >> {NVTXVGLOG} 2&>1
+cp {NVTCPT} {NPTOLDCPT}
+cp {NVTEXEC} {NPTOLDEXEC}
+
+#==============================================================#
+# NPT Production
+#==============================================================#
+cd {NPTDIR}
+{{ time -p gmx grompp -f {NPTINPUT} -c {NPTOLDEXEC} -o {NPTEXEC} -t {NPTOLDCPT} -n {NPTNDX} -p {NPTTOP} -maxwarn 1; }} >> {NPTGROMPPLOG} 2&>1
+{{ time -p gmx mdrun -nice 0 -v -s {NPTEXEC} -deffnm {NPTDEFF} -nt {CPU}; }} >> {NPTLOG} 2>&1
+{{ time -p echo '7 8 9 0' | gmx energy -f {NPTEDR} -o {NPTXVG}; }} >> {NPTXVGLOG} 2&>1
+{{ time -p echo '4 0' | gmx trjconf -f {NPTTRR} -pbc mol -center -boxcenter rect -n {NPTNDX} -s {NPTEXEC} -o {NPTGOODVIZ}; }} >> {NPTTRJLOG} 2>&1
+"""
+
+################################################################
+# Utilities
+################################################################
+
+def tryMkdir(directory,stop=True):
+    """	Arguments:
+            directory : 
+        Returns:
+            None
+    """
+    if os.path.isdir(directory):
+        if stop:
+            raise SystemExit('Path already exists:\n\t{}'.format(directory))
+    else:
+        try:
+            os.mkdir(directory)
+        except:
+            if stop:
+                raise SystemExit('Could not make directory:\n\t{}'.format(directory))
+
+def testDirNoExists(directory):
+    """	Arguments:
+            directory : 
+        Returns:
+            None
+    """
+    if os.path.isdir(directory):
+        raise SystemExit("Directory already exists:\n\t{}".format(directory))
+
+def testDirExists(directory):
+    """	Arguments:
+            directory : 
+        Returns:
+            None
+    """
+    if not os.path.isdir(directory):
+        raise SystemExit("Directory does not exist:\n\t{}".format(directory))
+
+def testFile(fileToTest):
+    """	Arguments:
+            fileToTest :
+        Returns:
+            None
+    """
+    if not os.path.exists(fileToTest):
+        raise SystemExit("File does not exist:\n\t{}".format(fileToTest))
+
+def checkMaxCPU(arguments):
+    """ Arguments:
+            arguments : dictionary; CLI arguments from docopt
+        Returns:
+            int or None; the max number of CPU to use, if None
+                         then there is no limit
+        Checks --threads option from CLI, if option not given
+        then default is to use all available CPU
+    """
+    # Returning a maximum CPU value if given
+    if arguments['--threads']:
+        if arguments['--threads'].isdigit():
+            Max = int(arguments['--threads'])
+            if Max <= os.cpu_count() and Max > 0:
+                return Max
+            else:
+                raise SystemExit('--threads greater than available CPUs')
+        else:
+            raise SystemExit('Invalid value to --threads: {}'.format(
+                        arguments['--threads']))
+    else:
+        return int(os.cpu_count())
+
+def setupStructure(Arguments):
+    """	Arguments:
+            Arguments : 
+        Returns:
+            None
+    """
+    os.mkdir(HOME)
+    global FORCEFIELD
+    FORCEFIELD = os.path.join(HOME, 'mylib-united-all-mod')
+    shutil.copytree(os.path.join(REQ, 'mylib-united-all-mod'), FORCEFIELD)
+    global YUKAWAHOME
+    YUKAWAHOME = os.path.join(HOME, 'yukawa')
+    shutil.copytree(os.path.join(REQ, 'yukawa'), YUKAWAHOME)
+    global RAWPREP
+    RAWPREP = os.path.join(REQ, 'Prep')
+    global MDTAB
+    MDTAB = os.path.join(REQ, 'aoth2o-md.xvg')
+    global MINTAB
+    MINTAB = os.path.join(REQ, 'aoth2o-min.xvg')
+
+#def prepareSample(Arguments, w0, zr, yukawa):
+def prepareSample(yukawa, Arguments, w0, zr):
+    """	Arguments:
+            Arguments :
+            w0 : 
+            zr : 
+            yukawa : 
+        Returns:
+            None
+
+        ExecDir/
+            ForceFields/
+            SampleDir1/
+                Prep/
+                Emin/
+                Nvt/
+                Npt/
+    """
+    ############################################################
+    # Defining Locations
+    ############################################################
+    sampleName = "w{}-{}-{}".format(w0, zr, yukawa)
+    samplePath = os.path.join(HOME, sampleName)
+    samplePrep = os.path.join(samplePath, 'Prep')
+    sampleEmin = os.path.join(samplePath, 'Emin')
+    sampleNvt = os.path.join(samplePath, 'Nvt')
+    sampleNpt = os.path.join(samplePath, 'Npt')
+    os.mkdir(samplePath)
+    os.mkdir(sampleEmin)
+    os.mkdir(sampleNvt)
+    os.mkdir(sampleNpt)
+
+    ############################################################
+    # Prep
+    ############################################################
+    shutil.copytree(RAWPREP, samplePrep)
+    packmolOutput = "{}-box.pdb".format(sampleName)
+    goodPackmol = PACKMOL.format(**{"OUTFILE": packmolOutput,
+                                    "WAT": 43*w0,
+                                    "ZRC": zr,
+                                    "CLC": zr*4})
+    packmolInput = os.path.join(samplePrep, '{}-mix.inp'.format(sampleName))
+    with open(packmolInput, 'w') as PackInput:
+        PackInput.write(goodPackmol)
+
+    ############################################################
+    # Emin
+    ############################################################
+    yukawaTable = os.path.join(YUKAWAHOME, 'aoth2o-min_ZRS_ZRS-{}.xvg'.format(yukawa))
+    shutil.copy2(yukawaTable, os.path.join(sampleEmin, '{}-emin_ZRS_ZRS.xvg'.format(sampleName)))
+    normalTable = os.path.join(REQ, 'aoth2o-min.xvg')
+    shutil.copy2(normalTable, os.path.join(sampleEmin, '{}-emin.xvg'.format(sampleName)))
+    goodTopology = TOPOLOGY.format(**{"WAT": 43*w0,
+                                      "ZRC": zr,
+                                      "CLC": zr*4})
+    eminTopology = os.path.join(sampleEmin, '{}.top'.format(sampleName))
+    with open(eminTopology, 'w') as EminTop:
+        EminTop.write(goodTopology)
+    goodEmin = EMIN.format(**{"FFPATH": FORCEFIELD})
+    eminMdp = os.path.join(sampleEmin, '{}-emin.mdp'.format(sampleName))
+    with open(eminMdp, 'w') as EminMdp:
+        EminMdp.write(goodEmin)
+
+    ############################################################
+    # NVT
+    ############################################################
+    shutil.copy2(normalTable, os.path.join(sampleNvt, '{}-nvt.xvg'.format(sampleName)))
+    shutil.copy2(yukawaTable, os.path.join(sampleNvt, '{}-nvt_ZRS_ZRS.xvg'.format(sampleName)))
+    nvtTopology = os.path.join(sampleNvt, '{}-nvt.top'.format(sampleName))
+    with open(nvtTopology, 'w') as NvtTop:
+        NvtTop.write(goodTopology)
+    goodNvt = NVT.format(**{"FFPATH": FORCEFIELD})
+    nvtMdp = os.path.join(sampleNvt, '{}-nvt.mdp'.format(sampleName))
+    with open(nvtMdp, 'w') as NvtMdp:
+        NvtMdp.write(goodNvt)
+
+    ############################################################
+    # NPT
+    ############################################################
+    shutil.copy2(normalTable, os.path.join(sampleNpt, '{}-npt.xvg'.format(sampleName)))
+    shutil.copy2(yukawaTable, os.path.join(sampleNpt, '{}-npt_ZRS_ZRS.xvg'.format(sampleName)))
+    nptTopology = os.path.join(sampleNpt, '{}-npt.top'.format(sampleName))
+    with open(nptTopology, 'w') as NptTop:
+        NptTop.write(goodTopology)
+    goodNpt = NPT.format(**{"FFPATH": FORCEFIELD})
+    nptMdp = os.path.join(sampleNpt, '{}-npt.mdp'.format(sampleName))
+    with open(nptMdp, 'w') as NptMdp:
+        NptMdp.write(goodNpt)
+
+    ############################################################
+    # Executing PACKMOL
+    ############################################################
+    packmolCommand = '''{{ time -p packmol < {}; }} >> {} 2>&1'''.format(packmolInput,
+                                                os.path.join(samplePrep,'packmol.log'))
+    with open(os.path.join(samplePrep, 'packmol.log'), 'w') as F:
+        F.write(packmolCommand)
+    print("Executing PACKMOL for {}... ".format(sampleName), end="", flush=True)
+    os.chdir(samplePrep)
+    subprocess.run(packmolCommand,
+                    shell=True,
+                    check=True,
+                    executable="/bin/bash")
+    print("Finished")
+    step1Output = os.path.join(samplePrep, '{}-bigbox.gro'.format(sampleName))
+    formatPdbStep1 = '''{{ time -p gmx editconf -bt cubic -f {} -o {} -d 0.5 -c; }} >> {} 2>&1'''.format(
+                                        os.path.join(samplePrep, packmolOutput),
+                                        step1Output,
+                                        os.path.join(samplePrep, 'formatPdbStep1.log'))
+    print("Formatting PDB for {}... ".format(sampleName), end="", flush=True)
+    with open(os.path.join(samplePrep, 'formatPdbStep1.log'), 'w') as F:
+        F.write(formatPdbStep1)
+    subprocess.run(formatPdbStep1,
+                    shell=True,
+                    check=True,
+                    executable="/bin/bash")
+    step2Output = os.path.join(samplePrep, '{}-mix.gro'.format(sampleName))
+    formatPdbStep2 = '''{{ time -p gmx editconf -bt cubic -f {} -o {} -density 775 -c; }} >> {} 2>&1'''.format(
+                                        step1Output,
+                                        step2Output,
+                                        os.path.join(samplePrep, 'formatPdbStep2.log'))
+    with open(os.path.join(samplePrep, 'formatPdbStep2.log'), 'w') as F:
+        F.write(formatPdbStep2)
+    subprocess.run(formatPdbStep2,
+                    shell=True,
+                    check=True,
+                    executable="/bin/bash")
+    shutil.copy2(step2Output, sampleEmin)
+    print("Finished")
+
+    ############################################################
+    # Preparing Emin
+    ############################################################
+    eminCoord = os.path.join(sampleEmin, '{}-mix.gro'.format(sampleName))
+    eminExecutable = os.path.join(sampleEmin, '{}-emin.tpr'.format(sampleName))
+    eminGromppLog = os.path.join(sampleEmin, '{}-emin.grompp.log'.format(sampleName))
+    eminGrompp = '''{{ time -p gmx grompp -f {} -p {} -c {} -o {} -maxwarn 1; }} >> {} 2>&1'''.format(
+                                        eminMdp,
+                                        eminTopology,
+                                        eminCoord,
+                                        eminExecutable,
+                                        eminGromppLog)
+    with open(eminGromppLog, 'w') as F:
+        F.write(eminGrompp)
+    print("Preparing emin executable for {}... ".format(sampleName), end="", flush=True)
+    os.chdir(sampleEmin)
+    subprocess.run(eminGrompp,
+                    shell=True,
+                    check=True,
+                    executable="/bin/bash")
+    print("Finished")
+
+    ############################################################
+    # Creating Execution Script
+    ############################################################
+    emMdrunLog = os.path.join(sampleEmin, '{}-emin.mdrun.log')
+    emNdxLog = os.path.join(sampleEmin, '{}-emin.make_ndx.log')
+    nvtGromppLog = os.path.join(sampleNvt, '{}-nvt.grompp.log')
+    nvtMdrunLog = os.path.join(sampleNvt, '{}-nvt.mdrun.log')
+    nvtXvgLog = os.path.join(sampleNvt, '{}-nvt.energy.log')
+    nptGromppLog = os.path.join(sampleNpt, '{}-npt.grompp.log')
+    nptMdrunLog = os.path.join(sampleNpt, '{}-npt.mdrun.log')
+    nptXvgLog = os.path.join(sampleNpt, '{}-npt.energy.log')
+    nptTrjLog = os.path.join(sampleNpt, '{}-npt.trjconv.log')
+    execContext = {
+            "EMDIR"         : sampleEmin,
+            "EMINPUT"       : eminExecutable,
+            "EMDEFF"        : '{}-emin'.format(sampleName),
+            "CPU"           : int(Arguments['--cpu']),
+            "EMLOG"         : emMdrunLog,
+            "EMINGRO"       : os.path.join(sampleEmin, '{}-emin.gro'.format(sampleName)),
+            "EMINNDX"       : os.path.join(sampleEmin, '{}-emin.ndx'.format(sampleName)),
+            "NDXLOG"        : emNdxLog,
+            "NVTNDX"        : os.path.join(sampleNvt, '{}-emin.ndx'.format(sampleName)),
+            "NPTNDX"        : os.path.join(sampleNpt, '{}-emin.ndx'.format(sampleName)),
+            "NVTGRO"        : os.path.join(sampleNvt, '{}-emin.gro'.format(sampleName)),
+            "NPTGRO"        : os.path.join(sampleNpt, '{}-emin.gro'.format(sampleName)),
+            "NVTDIR"        : sampleNvt,
+            "NVTINPUT"      : nvtMdp,
+            "NVTTOP"        : nvtTopology,
+            "NVTEXEC"       : os.path.join(sampleNvt, '{}-nvt.tpr'.format(sampleName)),
+            "NVTGROMPPLOG"  : nvtGromppLog,
+            "NVTDEFF"       : '{}-nvt'.format(sampleName),
+            "NVTLOG"        : nvtMdrunLog,
+            "NVTEDR"        : os.path.join(sampleNvt, '{}-nvt.edr'.format(sampleName)),
+            "NVTXVG"        : os.path.join(sampleNvt, '{}-nvt.energy.xvg'.format(sampleName)),
+            "NVTXVGLOG"     : nvtXvgLog,
+            "NVTCPT"        : os.path.join(sampleNvt, '{}-nvt.cpt'.format(sampleName)),
+            "NPTOLDCPT"     : os.path.join(sampleNpt, '{}-nvt.cpt'.format(sampleName)),
+            "NPTOLDEXEC"    : os.path.join(sampleNpt, '{}-nvt.tpr'.format(sampleName)),
+            "NPTDIR"        : sampleNpt,
+            "NPTINPUT"      : nptMdp,
+            "NPTEXEC"       : os.path.join(sampleNpt, '{}-npt.tpr'.format(sampleName)),
+            "NPTTOP"        : nptTopology,
+            "NPTGROMPPLOG"  : nptGromppLog,
+            "NPTDEFF"       : '{}-npt'.format(sampleName),
+            "NPTLOG"        : nptMdrunLog,
+            "NPTEDR"        : os.path.join(sampleNpt, '{}-npt.edr'.format(sampleName)),
+            "NPTXVG"        : os.path.join(sampleNpt, '{}-npt.energy.xvg'.format(sampleName)),
+            "NPTXVGLOG"     : nptXvgLog,
+            "NPTTRR"        : os.path.join(sampleNpt, '{}-npt.trr'.format(sampleName)),
+            "NPTGOODVIZ"    : os.path.join(sampleNpt, '{}-npt.goodviz.gro'.format(sampleName)),
+            "NPTTRJLOG"     : nptTrjLog
+            }
+    goodScript = EXEC.format(**execContext)
+    execScript = os.path.join(samplePath, '{}-exec.sh'.format(sampleName))
+    with open(execScript, 'w') as F:
+        F.write(goodScript)
+    st = os.stat(execScript)
+    os.chmod(execScript, st.st_mode | 0o0111)
+
+################################################################
+# Main
+################################################################
+
+def main(Args):
+    """	Arguments:
+            Args = dict; cli arguments given to docopt
+        Returns:
+            None
+    """
+    beginTime = timer()
+
+    global HOME
+    HOME = os.path.abspath(os.path.expandvars(Args['<execdirectory>']))
+    if Args['--force']:
+        if os.path.exists(HOME):
+            shutil.rmtree(HOME)
+    else:
+        testDirNoExists(HOME)
+
+    global REQ
+    REQ = os.path.abspath(os.path.expandvars(Args['<requiredstuff>']))
+    testDirExists(REQ)
+
+    maxCPU = checkMaxCPU(Args)
+    setupStructure(Args)
+
+    w0 = [10, 20]
+    zr = [21, 43, 86]
+    yuk = ["lj", "equal", "weak", "med", "strong"]
+    #for wsRatio in w0:
+    #    for conc in zr:
+    #        for pot in yuk:
+    #            prepareSample(Args, wsRatio, conc, pot)
+    for wsRatio in w0:
+        for conc in zr:
+            with multiprocessing.Pool(maxCPU) as P:
+                P.map(partial(prepareSample, Arguments=Args, w0=wsRatio, zr=conc), yuk)
+
+    endTime = timer()
+    print('Rmic Total time elapsed: {}'.format(
+        str(strftime('%H:%M:%S', gmtime(endTime - beginTime)))))
+
+################################################################
+if __name__ == '__main__':
+    arguments = docopt(__doc__, version=VERSION)
+    main(arguments)

@@ -11,10 +11,15 @@ Options:
     -q, --quiet
         Do not print anything to STDOUT
     -o <outputfile>, --output <outputfile>
-        Where to save table [default: table_ZRS_ZRS.xvg]
+        Where to save table [default: aoth2o-min_ZRS_ZRS.xvg]
     -r, --rcut <rcutvalue>
         Rcut is largest cutoff distance specified in mdp file
-        in nm [default: 4.0]"""
+        in nm [default: 4.0]
+    -p, --plot
+        Used to plot SALR potential
+    -z <axis>, --zoom <axis>
+        Zoom to a specific area in plot. Give <axis> as:
+            leftX,rightX,bottomY,topY"""
 VERSION='Beta Version\nAuthor: Alberto Nava'
 
 ################################################################
@@ -154,17 +159,17 @@ def main(Arguments):
     beginTime = timer()
     ############################################################
     Timestep = 2e-3
-    A = 0.08
-    Xi = 12
-    Eps=1.0
-    Sig=2.0
-    Alph=6
+    Xi  = 10.0
+    A   = 1.1
+    Eps = 2.15
+    Sig = 3.62
+    Alph= 18
     F, dF = f, df
     G, dG = yukawa, dyukawa
     H, dH = lj, dlj
-    r0 = np.arange(0, Timestep*20, Timestep, dtype=np.float64)
+    r0 = np.arange(0, Timestep*550, Timestep, dtype=np.float64)
     zeros = np.zeros(r0.shape, dtype=np.float64)
-    r = np.arange(Timestep*20, 
+    r = np.arange(Timestep*550, 
                   float(Arguments['--rcut'])+1+Timestep, 
                   Timestep, 
                   dtype=np.float64)
@@ -187,6 +192,26 @@ def main(Arguments):
                          header=False,
                          index=False,
                          mode='w')
+    if Arguments['--plot']:
+        X = col1
+        LJ = col6
+        LJF = col7
+        LJY = col6+col4
+        LJYF = col5+col7
+        YUK = col4
+        plt.plot(X,LJY,'-',label='LJ w/ added Yukawa')
+        plt.plot(X,LJ,'-.',label='Typical LJ')
+        plt.plot(X,YUK,'-.',label='Just Yukawa force')
+        #plt.plot(X,LJYF,'-',label='Yukawa force')
+        #plt.plot(X,LJF,'-.',label='Typical LJ')
+        plt.axhline(-0.1163,linestyle='--')
+        plt.xlabel('r')
+        plt.ylabel('V(r)')
+        plt.title('SALR Potential')
+        plt.legend(loc='best')
+        if Arguments['--zoom']:
+            plt.axis([float(value) for value in Arguments['--zoom'].split(',')])
+        plt.show()
     ############################################################
     endTime = timer()
     #if not Arguments['--quiet']:

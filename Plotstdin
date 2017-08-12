@@ -18,6 +18,9 @@ Options:
         Line style plotted by matplotlib [default: o-]
     -t <title>, --title <title>
         Title shown on plot
+    -z <zoom>, --zoom <zoom>
+        Zoom to a specific area in plot. Give <zoom> as:
+            leftX,rightX,bottomY,topY
     -o <outputfile>, --output <outputfile>
         If you wish to save the plot, specify name of graph
         with this option"""
@@ -62,6 +65,8 @@ def main(Arguments):
         plt.ylabel(Yname,fontsize=14)
     if Arguments['--title']:
         plt.title(Arguments['--title'],fontsize=18)
+    if Arguments['--zoom']:
+        plt.axis([float(value) for value in Arguments['--zoom'].split(',')])
     if Arguments['--output']:
         if os.path.exists(Arguments['--output']):
             print('Cannot save graph to file that already exists')

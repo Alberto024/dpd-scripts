@@ -532,15 +532,15 @@ def prepareSample(yukawa, Arguments, w0, zr):
     ############################################################
     # Creating Execution Script
     ############################################################
-    emMdrunLog = os.path.join(sampleEmin, '{}-emin.mdrun.log')
-    emNdxLog = os.path.join(sampleEmin, '{}-emin.make_ndx.log')
-    nvtGromppLog = os.path.join(sampleNvt, '{}-nvt.grompp.log')
-    nvtMdrunLog = os.path.join(sampleNvt, '{}-nvt.mdrun.log')
-    nvtXvgLog = os.path.join(sampleNvt, '{}-nvt.energy.log')
-    nptGromppLog = os.path.join(sampleNpt, '{}-npt.grompp.log')
-    nptMdrunLog = os.path.join(sampleNpt, '{}-npt.mdrun.log')
-    nptXvgLog = os.path.join(sampleNpt, '{}-npt.energy.log')
-    nptTrjLog = os.path.join(sampleNpt, '{}-npt.trjconv.log')
+    emMdrunLog = os.path.join(sampleEmin, '{}-emin.mdrun.log'.format(sampleName))
+    emNdxLog = os.path.join(sampleEmin, '{}-emin.make_ndx.log'.format(sampleName))
+    nvtGromppLog = os.path.join(sampleNvt, '{}-nvt.grompp.log'.format(sampleName))
+    nvtMdrunLog = os.path.join(sampleNvt, '{}-nvt.mdrun.log'.format(sampleName))
+    nvtXvgLog = os.path.join(sampleNvt, '{}-nvt.energy.log'.format(sampleName))
+    nptGromppLog = os.path.join(sampleNpt, '{}-npt.grompp.log'.format(sampleName))
+    nptMdrunLog = os.path.join(sampleNpt, '{}-npt.mdrun.log'.format(sampleName))
+    nptXvgLog = os.path.join(sampleNpt, '{}-npt.energy.log'.format(sampleName))
+    nptTrjLog = os.path.join(sampleNpt, '{}-npt.trjconv.log'.format(sampleName))
     execContext = {
             "EMDIR"         : sampleEmin,
             "EMINPUT"       : eminExecutable,
